@@ -18,7 +18,7 @@ lint:
 
 # Docker
 docker-up:
-	docker-compose up -d postgres redis
+	docker-compose up -d postgres rabbitmq redis
 
 docker-down:
 	docker-compose down
