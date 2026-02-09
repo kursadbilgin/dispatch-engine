@@ -12,11 +12,11 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/kursadbilgin/dispatch-engine/internal/config"
+	"github.com/kursadbilgin/dispatch-engine/internal/handler"
 	"github.com/kursadbilgin/dispatch-engine/internal/infra/postgresql"
 	"github.com/kursadbilgin/dispatch-engine/internal/infra/postgresql/migrations"
 	infraredis "github.com/kursadbilgin/dispatch-engine/internal/infra/redis"
 	"github.com/kursadbilgin/dispatch-engine/internal/observability"
-	"github.com/kursadbilgin/dispatch-engine/internal/transport"
 	"go.uber.org/zap"
 )
 
@@ -55,14 +55,14 @@ func main() {
 
 	app := fiber.New(fiber.Config{
 		AppName:      "dispatch-engine",
-		ErrorHandler: transport.ErrorHandler(logger),
+		ErrorHandler: handler.ErrorHandler(logger),
 	})
 
 	app.Use(recover.New())
 	app.Use(requestid.New())
 	app.Use(cors.New())
 
-	transport.RegisterHealthRoutes(app, sqlDB, rdb)
+	handler.RegisterHealthRoutes(app, sqlDB, rdb)
 
 	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
