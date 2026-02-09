@@ -1,20 +1,12 @@
-.PHONY: build-api build-worker build test lint run-api run-worker clean
+.PHONY: build test lint run clean docker-up docker-down
 
 # Build
-build-api:
+build:
 	go build -o bin/api ./cmd/api
 
-build-worker:
-	go build -o bin/worker ./cmd/worker
-
-build: build-api build-worker
-
 # Run
-run-api:
+run:
 	go run ./cmd/api
-
-run-worker:
-	go run ./cmd/worker
 
 # Test
 test:
@@ -23,6 +15,13 @@ test:
 # Lint
 lint:
 	golangci-lint run ./...
+
+# Docker
+docker-up:
+	docker-compose up -d postgres redis
+
+docker-down:
+	docker-compose down
 
 # Clean
 clean:
