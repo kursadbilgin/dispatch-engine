@@ -2,7 +2,7 @@ package migrations
 
 import (
 	"github.com/go-gormigrate/gormigrate/v2"
-	"github.com/kursadbilgin/dispatch-engine/internal/domain"
+	"github.com/kursadbilgin/dispatch-engine/internal/repository"
 	"gorm.io/gorm"
 )
 
@@ -11,7 +11,7 @@ func Migrate(db *gorm.DB) error {
 		{
 			ID: "000001_create_notifications",
 			Migrate: func(tx *gorm.DB) error {
-				if err := tx.AutoMigrate(&domain.Notification{}); err != nil {
+				if err := tx.AutoMigrate(&repository.NotificationModel{}); err != nil {
 					return err
 				}
 				indexes := []string{
@@ -29,28 +29,28 @@ func Migrate(db *gorm.DB) error {
 				return nil
 			},
 			Rollback: func(tx *gorm.DB) error {
-				return tx.Migrator().DropTable(&domain.Notification{})
+				return tx.Migrator().DropTable(&repository.NotificationModel{})
 			},
 		},
 		{
 			ID: "000002_create_notification_attempts",
 			Migrate: func(tx *gorm.DB) error {
-				if err := tx.AutoMigrate(&domain.NotificationAttempt{}); err != nil {
+				if err := tx.AutoMigrate(&repository.NotificationAttemptModel{}); err != nil {
 					return err
 				}
 				return tx.Exec(`CREATE INDEX IF NOT EXISTS idx_attempts_notification_id ON notification_attempts (notification_id)`).Error
 			},
 			Rollback: func(tx *gorm.DB) error {
-				return tx.Migrator().DropTable(&domain.NotificationAttempt{})
+				return tx.Migrator().DropTable(&repository.NotificationAttemptModel{})
 			},
 		},
 		{
 			ID: "000003_create_batches",
 			Migrate: func(tx *gorm.DB) error {
-				return tx.AutoMigrate(&domain.Batch{})
+				return tx.AutoMigrate(&repository.BatchModel{})
 			},
 			Rollback: func(tx *gorm.DB) error {
-				return tx.Migrator().DropTable(&domain.Batch{})
+				return tx.Migrator().DropTable(&repository.BatchModel{})
 			},
 		},
 	})

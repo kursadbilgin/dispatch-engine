@@ -99,18 +99,18 @@ const (
 
 // Notification is the core domain entity representing a message to be delivered.
 type Notification struct {
-	ID                string   `gorm:"type:uuid;primaryKey"`
-	CorrelationID     string   `gorm:"type:varchar(36);not null"`
-	IdempotencyKey    *string  `gorm:"type:varchar(255)"`
-	BatchID           *string  `gorm:"type:uuid"`
-	Channel           Channel  `gorm:"type:varchar(10);not null"`
-	Priority          Priority `gorm:"type:varchar(10);not null"`
-	Recipient         string   `gorm:"type:varchar(255);not null"`
-	Content           string   `gorm:"type:text;not null"`
-	Status            Status   `gorm:"type:varchar(20);not null"`
-	ProviderMessageID *string  `gorm:"type:varchar(255)"`
-	AttemptCount      int      `gorm:"not null;default:0"`
-	MaxRetries        int      `gorm:"not null;default:5"`
+	ID                string
+	CorrelationID     string
+	IdempotencyKey    *string
+	BatchID           *string
+	Channel           Channel
+	Priority          Priority
+	Recipient         string
+	Content           string
+	Status            Status
+	ProviderMessageID *string
+	AttemptCount      int
+	MaxRetries        int
 	NextRetryAt       *time.Time
 	CreatedAt         time.Time
 	UpdatedAt         time.Time

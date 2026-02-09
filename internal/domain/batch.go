@@ -23,9 +23,9 @@ func (s BatchStatus) IsValid() bool {
 
 // Batch groups multiple notifications submitted together.
 type Batch struct {
-	ID         string      `gorm:"type:uuid;primaryKey"`
-	TotalCount int         `gorm:"not null"`
-	Status     BatchStatus `gorm:"type:varchar(20);not null"`
+	ID         string
+	TotalCount int
+	Status     BatchStatus
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }

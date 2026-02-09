@@ -1,13 +1,22 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/kursadbilgin/dispatch-engine/internal/config"
 	"github.com/kursadbilgin/dispatch-engine/internal/infra/postgresql"
 	"github.com/kursadbilgin/dispatch-engine/internal/infra/postgresql/migrations"
 	infraredis "github.com/kursadbilgin/dispatch-engine/internal/infra/redis"
 	"github.com/kursadbilgin/dispatch-engine/internal/observability"
+	"github.com/kursadbilgin/dispatch-engine/internal/transport"
 	"go.uber.org/zap"
 )
 
@@ -44,8 +53,33 @@ func main() {
 	}
 	defer rdb.Close()
 
-	logger.Info("dispatch-engine api started", zap.Int("port", cfg.APIPort))
+	app := fiber.New(fiber.Config{
+		AppName:      "dispatch-engine",
+		ErrorHandler: transport.ErrorHandler(logger),
+	})
 
-	_ = db
-	_ = rdb
+	app.Use(recover.New())
+	app.Use(requestid.New())
+	app.Use(cors.New())
+
+	transport.RegisterHealthRoutes(app, sqlDB, rdb)
+
+	// Graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		addr := fmt.Sprintf(":%d", cfg.APIPort)
+		logger.Info("dispatch-engine api started", zap.Int("port", cfg.APIPort))
+		if err := app.Listen(addr); err != nil {
+			logger.Fatal("fiber listen failed", zap.Error(err))
+		}
+	}()
+
+	<-quit
+	logger.Info("shutting down server")
+	if err := app.ShutdownWithTimeout(15e9); err != nil {
+		logger.Error("server forced shutdown", zap.Error(err))
+	}
+	logger.Info("server stopped")
 }
