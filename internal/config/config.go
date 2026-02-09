@@ -7,10 +7,13 @@ import (
 )
 
 type Config struct {
-	DatabaseDSN string `env:"DATABASE_DSN,required=true"`
-	RedisURL    string `env:"REDIS_URL,required=true"`
-	APIPort     int    `env:"API_PORT,default=8080"`
-	LogLevel    string `env:"LOG_LEVEL,default=info"`
+	DatabaseDSN     string `env:"DATABASE_DSN,required=true"`
+	RabbitMQURL     string `env:"RABBITMQ_URL,required=true"`
+	RedisURL        string `env:"REDIS_URL,required=true"`
+	WebhookSiteURL  string `env:"WEBHOOK_SITE_URL,required=true"`
+	RateLimitPerSec int    `env:"RATE_LIMIT_PER_SEC,default=100"`
+	APIPort         int    `env:"API_PORT,default=8080"`
+	LogLevel        string `env:"LOG_LEVEL,default=info"`
 }
 
 func Load() (*Config, error) {

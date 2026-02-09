@@ -28,6 +28,7 @@ type NotificationRepository interface {
 	Create(ctx context.Context, n *domain.Notification) error
 	CreateBatch(ctx context.Context, notifications []*domain.Notification) error
 	GetByID(ctx context.Context, id string) (*domain.Notification, error)
+	GetByIdempotencyKey(ctx context.Context, idempotencyKey string) (*domain.Notification, error)
 	List(ctx context.Context, params ListParams) ([]domain.Notification, int64, error)
 	UpdateStatus(ctx context.Context, id string, status domain.Status) error
 	UpdateStatusWithRetry(ctx context.Context, id string, status domain.Status, nextRetryAt time.Time) error
@@ -89,6 +90,20 @@ func (r *GormNotificationRepo) CreateBatch(ctx context.Context, notifications []
 func (r *GormNotificationRepo) GetByID(ctx context.Context, id string) (*domain.Notification, error) {
 	var model NotificationModel
 	err := r.db.WithContext(ctx).First(&model, "id = ?", id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return notificationModelToDomain(&model), nil
+}
+
+func (r *GormNotificationRepo) GetByIdempotencyKey(ctx context.Context, idempotencyKey string) (*domain.Notification, error) {
+	var model NotificationModel
+	err := r.db.WithContext(ctx).
+		Where("idempotency_key = ?", idempotencyKey).
+		First(&model).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, domain.ErrNotFound
 	}
