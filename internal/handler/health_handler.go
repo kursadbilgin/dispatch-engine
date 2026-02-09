@@ -1,4 +1,4 @@
-package transport
+package handler
 
 import (
 	"context"
@@ -12,12 +12,11 @@ import (
 const readinessTimeout = 2 * time.Second
 
 func RegisterHealthRoutes(app fiber.Router, sqlDB *sql.DB, rdb *redis.Client) {
-	app.Get("/healthz", HealthzHandler())
+	app.Get("/livez", LivezHandler())
 	app.Get("/readyz", ReadyzHandler(sqlDB, rdb))
-	app.Get("/health", ReadyzHandler(sqlDB, rdb))
 }
 
-func HealthzHandler() fiber.Handler {
+func LivezHandler() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{
 			"status": "ok",
