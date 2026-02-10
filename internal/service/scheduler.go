@@ -11,12 +11,12 @@ import (
 )
 
 const (
-	defaultRetryScanInterval = 5 * time.Second
-	defaultRetryScanLimit    = 100
+	defaultSchedulerScanInterval = 5 * time.Second
+	defaultSchedulerScanLimit    = 100
 )
 
-// RetryScanner periodically re-enqueues due notifications marked for retry.
-type RetryScanner struct {
+// Scheduler periodically enqueues due scheduled notifications.
+type Scheduler struct {
 	notifications repository.NotificationRepository
 	publisher     queue.Publisher
 	logger        *zap.Logger
@@ -24,24 +24,24 @@ type RetryScanner struct {
 	limit         int
 }
 
-func NewRetryScanner(
+func NewScheduler(
 	notifications repository.NotificationRepository,
 	publisher queue.Publisher,
 	interval time.Duration,
 	limit int,
 	logger *zap.Logger,
-) (*RetryScanner, error) {
+) (*Scheduler, error) {
 	if interval <= 0 {
-		interval = defaultRetryScanInterval
+		interval = defaultSchedulerScanInterval
 	}
 	if limit <= 0 {
-		limit = defaultRetryScanLimit
+		limit = defaultSchedulerScanLimit
 	}
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 
-	return &RetryScanner{
+	return &Scheduler{
 		notifications: notifications,
 		publisher:     publisher,
 		logger:        logger,
@@ -50,14 +50,13 @@ func NewRetryScanner(
 	}, nil
 }
 
-func (s *RetryScanner) Start(ctx context.Context) error {
+func (s *Scheduler) Start(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	// Run an initial scan so already-due retries do not wait for the first ticker edge.
 	if err := s.scanDue(ctx); err != nil && ctx.Err() == nil {
-		s.logger.Error("retry scanner initial scan failed", zap.Error(err))
+		s.logger.Error("scheduler initial scan failed", zap.Error(err))
 	}
 
 	ticker := time.NewTicker(s.interval)
@@ -72,16 +71,16 @@ func (s *RetryScanner) Start(ctx context.Context) error {
 				if ctx.Err() != nil {
 					return nil
 				}
-				s.logger.Error("retry scanner scan failed", zap.Error(err))
+				s.logger.Error("scheduler scan failed", zap.Error(err))
 			}
 		}
 	}
 }
 
-func (s *RetryScanner) scanDue(ctx context.Context) error {
-	dueNotifications, err := s.notifications.GetDueForRetry(ctx, s.limit)
+func (s *Scheduler) scanDue(ctx context.Context) error {
+	dueNotifications, err := s.notifications.GetDueForSchedule(ctx, s.limit)
 	if err != nil {
-		return fmt.Errorf("failed to fetch due retries: %w", err)
+		return fmt.Errorf("failed to fetch due scheduled notifications: %w", err)
 	}
 
 	for i := range dueNotifications {
@@ -95,7 +94,7 @@ func (s *RetryScanner) scanDue(ctx context.Context) error {
 
 		queueName := queue.QueueName(notification.Channel)
 		if err := s.publisher.Publish(ctx, queueName, msg); err != nil {
-			s.logger.Error("failed to enqueue retry notification",
+			s.logger.Error("failed to enqueue scheduled notification",
 				zap.String("notificationId", notification.ID),
 				zap.String("queue", queueName),
 				zap.Error(err),
@@ -103,12 +102,18 @@ func (s *RetryScanner) scanDue(ctx context.Context) error {
 			continue
 		}
 
-		if err := s.notifications.ClearNextRetryAt(ctx, notification.ID); err != nil {
-			s.logger.Error("failed to clear next retry timestamp after enqueue",
+		updated, err := s.notifications.MarkQueuedIfAccepted(ctx, notification.ID)
+		if err != nil {
+			s.logger.Error("failed to mark scheduled notification as queued",
 				zap.String("notificationId", notification.ID),
 				zap.Error(err),
 			)
 			continue
+		}
+		if !updated {
+			s.logger.Info("scheduled notification status changed before queue mark",
+				zap.String("notificationId", notification.ID),
+			)
 		}
 	}
 

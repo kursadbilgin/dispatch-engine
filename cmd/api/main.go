@@ -42,6 +42,7 @@ type appDependencies struct {
 	notificationService *service.NotificationService
 	workerService       *service.WorkerService
 	retryScanner        *service.RetryScanner
+	scheduler           *service.Scheduler
 	provider            provider.Provider
 	rateLimiter         ratelimit.RateLimiter
 }
@@ -128,6 +129,15 @@ func main() {
 		retryScannerErrCh <- nil
 	}()
 
+	schedulerErrCh := make(chan error, 1)
+	go func() {
+		if err := deps.scheduler.Start(signalCtx); err != nil {
+			schedulerErrCh <- err
+			return
+		}
+		schedulerErrCh <- nil
+	}()
+
 	listenErrCh := make(chan error, 1)
 	go func() {
 		addr := fmt.Sprintf(":%d", cfg.APIPort)
@@ -155,6 +165,11 @@ func main() {
 	case err := <-retryScannerErrCh:
 		if err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("retry scanner stopped with error", zap.Error(err))
+		}
+		stop()
+	case err := <-schedulerErrCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("scheduler stopped with error", zap.Error(err))
 		}
 		stop()
 	}
@@ -227,6 +242,17 @@ func wireDependencies(
 		return nil, fmt.Errorf("failed to initialize retry scanner: %w", err)
 	}
 
+	scheduler, err := service.NewScheduler(
+		notificationRepo,
+		publisher,
+		cfg.SchedulerScanInterval,
+		cfg.SchedulerScanLimit,
+		logger,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize scheduler: %w", err)
+	}
+
 	return &appDependencies{
 		notificationRepo:    notificationRepo,
 		batchRepo:           batchRepo,
@@ -236,6 +262,7 @@ func wireDependencies(
 		notificationService: notificationService,
 		workerService:       workerService,
 		retryScanner:        retryScanner,
+		scheduler:           scheduler,
 		provider:            webhookProvider,
 		rateLimiter:         redisRateLimiter,
 	}, nil

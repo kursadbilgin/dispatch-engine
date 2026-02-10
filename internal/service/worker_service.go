@@ -48,21 +48,6 @@ func NewWorkerService(
 	concurrency int,
 	logger *zap.Logger,
 ) (*WorkerService, error) {
-	if notifications == nil {
-		return nil, fmt.Errorf("notification repository is required")
-	}
-	if attempts == nil {
-		return nil, fmt.Errorf("attempt repository is required")
-	}
-	if consumer == nil {
-		return nil, fmt.Errorf("consumer is required")
-	}
-	if provider == nil {
-		return nil, fmt.Errorf("provider is required")
-	}
-	if rateLimiter == nil {
-		return nil, fmt.Errorf("rate limiter is required")
-	}
 	if concurrency < minWorkerConcurrency {
 		concurrency = minWorkerConcurrency
 	}

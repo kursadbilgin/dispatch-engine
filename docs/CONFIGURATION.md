@@ -36,6 +36,8 @@ Dispatch Engine configuration is loaded from environment variables into `interna
 | `WORKER_CONCURRENCY` | No | `16` | Worker goroutine count |
 | `RETRY_SCAN_INTERVAL` | No | `5s` | Retry scanner interval |
 | `RETRY_SCAN_LIMIT` | No | `100` | Max retry records processed per scan |
+| `SCHEDULER_SCAN_INTERVAL` | No | `5s` | Scheduled scanner interval |
+| `SCHEDULER_SCAN_LIMIT` | No | `100` | Max scheduled records processed per scan |
 | `API_PORT` | No | `8080` | HTTP server port |
 | `LOG_LEVEL` | No | `info` | Log level |
 
@@ -63,6 +65,8 @@ RATE_LIMIT_PER_SEC=100
 WORKER_CONCURRENCY=16
 RETRY_SCAN_INTERVAL=5s
 RETRY_SCAN_LIMIT=100
+SCHEDULER_SCAN_INTERVAL=5s
+SCHEDULER_SCAN_LIMIT=100
 API_PORT=8080
 LOG_LEVEL=info
 ```
@@ -79,6 +83,9 @@ LOG_LEVEL=info
 
 ### `RETRY_SCAN_INTERVAL` and `RETRY_SCAN_LIMIT`
 - Directly affect retry latency and DB scanning pressure.
+
+### `SCHEDULER_SCAN_INTERVAL` and `SCHEDULER_SCAN_LIMIT`
+- Directly affect scheduled-delivery latency and DB scan pressure for due notifications.
 
 ### `LOG_LEVEL`
 Common supported values:

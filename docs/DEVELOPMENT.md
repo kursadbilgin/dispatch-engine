@@ -35,7 +35,7 @@ curl http://localhost:8080/readyz
 | `internal/repository/` | GORM repository implementations |
 | `internal/queue/` | RabbitMQ publisher/consumer/topology |
 | `internal/provider/` | External webhook provider client |
-| `internal/service/` | Notification, worker, retry workflows |
+| `internal/service/` | Notification, worker, retry, and scheduler workflows |
 | `internal/observability/` | Logging and metrics utilities |
 | `docs/` | Technical documentation |
 | `postman/` | Postman collection/environment |

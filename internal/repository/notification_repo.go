@@ -31,9 +31,11 @@ type NotificationRepository interface {
 	GetByIdempotencyKey(ctx context.Context, idempotencyKey string) (*domain.Notification, error)
 	List(ctx context.Context, params ListParams) ([]domain.Notification, int64, error)
 	UpdateStatus(ctx context.Context, id string, status domain.Status) error
+	MarkQueuedIfAccepted(ctx context.Context, id string) (bool, error)
 	UpdateStatusWithRetry(ctx context.Context, id string, status domain.Status, nextRetryAt time.Time) error
 	Cancel(ctx context.Context, id string) error
 	LockForSending(ctx context.Context, id string) (*domain.Notification, error)
+	GetDueForSchedule(ctx context.Context, limit int) ([]domain.Notification, error)
 	GetDueForRetry(ctx context.Context, limit int) ([]domain.Notification, error)
 	ClearNextRetryAt(ctx context.Context, id string) error
 	SetProviderMessageID(ctx context.Context, id string, providerMsgID string) error
@@ -174,6 +176,20 @@ func (r *GormNotificationRepo) UpdateStatus(ctx context.Context, id string, stat
 	return nil
 }
 
+func (r *GormNotificationRepo) MarkQueuedIfAccepted(ctx context.Context, id string) (bool, error) {
+	result := r.db.WithContext(ctx).
+		Model(&NotificationModel{}).
+		Where("id = ? AND status = ?", id, domain.StatusAccepted).
+		Updates(map[string]any{
+			"status":     domain.StatusQueued,
+			"updated_at": gorm.Expr("NOW()"),
+		})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
 func (r *GormNotificationRepo) UpdateStatusWithRetry(ctx context.Context, id string, status domain.Status, nextRetryAt time.Time) error {
 	result := r.db.WithContext(ctx).
 		Model(&NotificationModel{}).
@@ -233,6 +249,25 @@ func (r *GormNotificationRepo) LockForSending(ctx context.Context, id string) (*
 	}
 
 	return nil, nil
+}
+
+func (r *GormNotificationRepo) GetDueForSchedule(ctx context.Context, limit int) ([]domain.Notification, error) {
+	var models []NotificationModel
+	err := r.db.WithContext(ctx).
+		Where("status = ? AND scheduled_at IS NOT NULL AND scheduled_at <= ?", domain.StatusAccepted, time.Now()).
+		Order("scheduled_at ASC").
+		Limit(limit).
+		Find(&models).Error
+	if err != nil {
+		return nil, err
+	}
+
+	notifications := make([]domain.Notification, 0, len(models))
+	for i := range models {
+		notifications = append(notifications, *notificationModelToDomain(&models[i]))
+	}
+
+	return notifications, nil
 }
 
 func (r *GormNotificationRepo) GetDueForRetry(ctx context.Context, limit int) ([]domain.Notification, error) {

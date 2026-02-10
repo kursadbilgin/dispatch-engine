@@ -39,6 +39,12 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.RetryScanLimit != 100 {
 		t.Errorf("RetryScanLimit = %d, want 100", cfg.RetryScanLimit)
 	}
+	if cfg.SchedulerScanInterval != 5*time.Second {
+		t.Errorf("SchedulerScanInterval = %s, want 5s", cfg.SchedulerScanInterval)
+	}
+	if cfg.SchedulerScanLimit != 100 {
+		t.Errorf("SchedulerScanLimit = %d, want 100", cfg.SchedulerScanLimit)
+	}
 }
 
 func TestLoad_CustomValues(t *testing.T) {
@@ -49,6 +55,8 @@ func TestLoad_CustomValues(t *testing.T) {
 	t.Setenv("WORKER_CONCURRENCY", "8")
 	t.Setenv("RETRY_SCAN_INTERVAL", "2s")
 	t.Setenv("RETRY_SCAN_LIMIT", "250")
+	t.Setenv("SCHEDULER_SCAN_INTERVAL", "3s")
+	t.Setenv("SCHEDULER_SCAN_LIMIT", "120")
 
 	cfg, err := Load()
 	if err != nil {
@@ -72,6 +80,12 @@ func TestLoad_CustomValues(t *testing.T) {
 	}
 	if cfg.RetryScanLimit != 250 {
 		t.Errorf("RetryScanLimit = %d, want 250", cfg.RetryScanLimit)
+	}
+	if cfg.SchedulerScanInterval != 3*time.Second {
+		t.Errorf("SchedulerScanInterval = %s, want 3s", cfg.SchedulerScanInterval)
+	}
+	if cfg.SchedulerScanLimit != 120 {
+		t.Errorf("SchedulerScanLimit = %d, want 120", cfg.SchedulerScanLimit)
 	}
 }
 

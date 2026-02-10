@@ -42,6 +42,7 @@ Request fields:
 | `idempotencyKey` | string | No | dedup key for repeated create requests |
 | `correlationId` | string | No | request tracing correlation |
 | `maxRetries` | int | No | `>0` |
+| `scheduledAt` | string (RFC3339) | No | If in the future, record stays `ACCEPTED` until scheduler enqueue |
 
 Example:
 
@@ -59,6 +60,10 @@ curl -X POST http://localhost:8080/v1/notifications \
 ```
 
 Success response: `202 Accepted`.
+
+Scheduling behavior:
+- `scheduledAt` omitted or `<= now`: notification is enqueued immediately (`QUEUED`).
+- `scheduledAt > now`: notification is persisted as `ACCEPTED`; scheduler enqueues it when due.
 
 ## 2. Create Notification Batch
 

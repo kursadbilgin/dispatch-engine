@@ -33,9 +33,6 @@ type NotificationHandler struct {
 }
 
 func NewNotificationHandler(service NotificationService) (*NotificationHandler, error) {
-	if service == nil {
-		return nil, fmt.Errorf("notification service is required")
-	}
 	return &NotificationHandler{service: service}, nil
 }
 
@@ -64,6 +61,7 @@ type createNotificationRequest struct {
 	Recipient      string  `json:"recipient"`
 	Content        string  `json:"content"`
 	MaxRetries     *int    `json:"maxRetries,omitempty"`
+	ScheduledAt    *string `json:"scheduledAt,omitempty"`
 }
 
 type createBatchRequest struct {
@@ -83,6 +81,7 @@ type notificationResponse struct {
 	ProviderMessageID *string    `json:"providerMessageId,omitempty"`
 	AttemptCount      int        `json:"attemptCount"`
 	MaxRetries        int        `json:"maxRetries"`
+	ScheduledAt       *time.Time `json:"scheduledAt,omitempty"`
 	NextRetryAt       *time.Time `json:"nextRetryAt,omitempty"`
 	CreatedAt         time.Time  `json:"createdAt,omitempty"`
 	UpdatedAt         time.Time  `json:"updatedAt,omitempty"`
@@ -319,6 +318,11 @@ func requestToDomainNotification(req createNotificationRequest, fallbackCorrelat
 		return domain.Notification{}, err
 	}
 
+	scheduledAt, err := parseOptionalRFC3339(req.ScheduledAt, "scheduledAt")
+	if err != nil {
+		return domain.Notification{}, err
+	}
+
 	n := domain.Notification{
 		CorrelationID:  strings.TrimSpace(req.CorrelationID),
 		IdempotencyKey: req.IdempotencyKey,
@@ -326,6 +330,7 @@ func requestToDomainNotification(req createNotificationRequest, fallbackCorrelat
 		Priority:       priority,
 		Recipient:      strings.TrimSpace(req.Recipient),
 		Content:        strings.TrimSpace(req.Content),
+		ScheduledAt:    scheduledAt,
 	}
 
 	if n.CorrelationID == "" {
@@ -375,10 +380,27 @@ func toNotificationResponse(n *domain.Notification) notificationResponse {
 		ProviderMessageID: n.ProviderMessageID,
 		AttemptCount:      n.AttemptCount,
 		MaxRetries:        n.MaxRetries,
+		ScheduledAt:       n.ScheduledAt,
 		NextRetryAt:       n.NextRetryAt,
 		CreatedAt:         n.CreatedAt,
 		UpdatedAt:         n.UpdatedAt,
 	}
+}
+
+func parseOptionalRFC3339(value *string, field string) (*time.Time, error) {
+	if value == nil {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	t, err := time.Parse(time.RFC3339, trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s must be RFC3339", domain.ErrValidation, field)
+	}
+	return &t, nil
 }
 
 func toHTTPError(err error) error {

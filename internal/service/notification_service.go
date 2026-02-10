@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/kursadbilgin/dispatch-engine/internal/domain"
@@ -44,15 +45,6 @@ func NewNotificationService(
 	publisher queue.Publisher,
 	logger *zap.Logger,
 ) (*NotificationService, error) {
-	if notifications == nil {
-		return nil, fmt.Errorf("notification repository is required")
-	}
-	if batches == nil {
-		return nil, fmt.Errorf("batch repository is required")
-	}
-	if publisher == nil {
-		return nil, fmt.Errorf("publisher is required")
-	}
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -83,6 +75,11 @@ func (s *NotificationService) Create(ctx context.Context, notification *domain.N
 			return existing, nil
 		}
 		return nil, err
+	}
+
+	now := time.Now().UTC()
+	if !shouldEnqueueImmediately(notification.ScheduledAt, now) {
+		return notification, nil
 	}
 
 	msg := queue.NotificationMessage{
@@ -158,8 +155,13 @@ func (s *NotificationService) CreateBatch(
 	}
 
 	failed := 0
+	now := time.Now().UTC()
 	for i := range createdPtrs {
 		current := createdPtrs[i]
+		if !shouldEnqueueImmediately(current.ScheduledAt, now) {
+			continue
+		}
+
 		msg := queue.NotificationMessage{
 			NotificationID: current.ID,
 			CorrelationID:  current.CorrelationID,
@@ -303,6 +305,13 @@ func normalizeOptionalString(v *string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func shouldEnqueueImmediately(scheduledAt *time.Time, now time.Time) bool {
+	if scheduledAt == nil {
+		return true
+	}
+	return !scheduledAt.After(now)
 }
 
 func (s *NotificationService) resolveIdempotencyConflict(

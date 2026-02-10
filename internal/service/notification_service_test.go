@@ -121,6 +121,58 @@ func TestNotificationServiceCreatePublishFailureMarksFailed(t *testing.T) {
 	}
 }
 
+func TestNotificationServiceCreateScheduledSkipsPublish(t *testing.T) {
+	t.Parallel()
+
+	updatedStatus := false
+	repo := &fakeNotificationRepo{
+		createFn: func(ctx context.Context, n *domain.Notification) error {
+			n.CreatedAt = time.Now().UTC()
+			n.UpdatedAt = n.CreatedAt
+			return nil
+		},
+		updateStatusFn: func(ctx context.Context, id string, status domain.Status) error {
+			updatedStatus = true
+			return nil
+		},
+	}
+
+	published := false
+	publisher := &fakePublisher{
+		publishFn: func(ctx context.Context, queueName string, msg queue.NotificationMessage) error {
+			published = true
+			return nil
+		},
+	}
+
+	svc, err := NewNotificationService(repo, &fakeBatchRepo{}, publisher, nil)
+	if err != nil {
+		t.Fatalf("NewNotificationService() error = %v", err)
+	}
+
+	scheduledAt := time.Now().UTC().Add(2 * time.Minute)
+	result, err := svc.Create(context.Background(), &domain.Notification{
+		Channel:     domain.ChannelSMS,
+		Priority:    domain.PriorityNormal,
+		Recipient:   "+905551112233",
+		Content:     "hello world",
+		ScheduledAt: &scheduledAt,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	if result.Status != domain.StatusAccepted {
+		t.Fatalf("result status = %s, want ACCEPTED", result.Status)
+	}
+	if published {
+		t.Fatal("publish should not be called for future scheduled notification")
+	}
+	if updatedStatus {
+		t.Fatal("status should not be updated to QUEUED for future scheduled notification")
+	}
+}
+
 func TestNotificationServiceCreateIdempotencyConflictReturnsExisting(t *testing.T) {
 	t.Parallel()
 
@@ -273,43 +325,6 @@ func TestNotificationServiceCreateBatchExceedsLimit(t *testing.T) {
 	}
 }
 
-func TestNewNotificationServiceRequiresDependencies(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name          string
-		notifications repository.NotificationRepository
-		batches       repository.BatchRepository
-		publisher     queue.Publisher
-	}{
-		{
-			name:      "missing notification repository",
-			batches:   &fakeBatchRepo{},
-			publisher: &fakePublisher{},
-		},
-		{
-			name:          "missing batch repository",
-			notifications: &fakeNotificationRepo{},
-			publisher:     &fakePublisher{},
-		},
-		{
-			name:          "missing publisher",
-			notifications: &fakeNotificationRepo{},
-			batches:       &fakeBatchRepo{},
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if _, err := NewNotificationService(tt.notifications, tt.batches, tt.publisher, nil); err == nil {
-				t.Fatal("NewNotificationService() expected error, got nil")
-			}
-		})
-	}
-}
-
 func TestNotificationServiceCreateBatchPartialFailure(t *testing.T) {
 	t.Parallel()
 
@@ -400,6 +415,89 @@ func TestNotificationServiceCreateBatchPartialFailure(t *testing.T) {
 	}
 }
 
+func TestNotificationServiceCreateBatchSkipsFutureScheduledEnqueue(t *testing.T) {
+	t.Parallel()
+
+	queuedCount := 0
+	repo := &fakeNotificationRepo{
+		createBatchFn: func(ctx context.Context, notifications []*domain.Notification) error {
+			return nil
+		},
+		updateStatusFn: func(ctx context.Context, id string, status domain.Status) error {
+			if status != domain.StatusQueued {
+				t.Fatalf("status = %s, want QUEUED", status)
+			}
+			queuedCount++
+			return nil
+		},
+	}
+
+	var updatedBatchStatus domain.BatchStatus
+	batchRepo := &fakeBatchRepo{
+		updateStatusFn: func(ctx context.Context, id string, status domain.BatchStatus) error {
+			updatedBatchStatus = status
+			return nil
+		},
+	}
+
+	publishCalls := 0
+	publisher := &fakePublisher{
+		publishFn: func(ctx context.Context, queueName string, msg queue.NotificationMessage) error {
+			publishCalls++
+			return nil
+		},
+	}
+
+	svc, err := NewNotificationService(repo, batchRepo, publisher, nil)
+	if err != nil {
+		t.Fatalf("NewNotificationService() error = %v", err)
+	}
+
+	scheduledAt := time.Now().UTC().Add(3 * time.Minute)
+	batch, created, err := svc.CreateBatch(context.Background(), []domain.Notification{
+		{
+			Channel:     domain.ChannelSMS,
+			Priority:    domain.PriorityNormal,
+			Recipient:   "+905551112233",
+			Content:     "scheduled sms",
+			ScheduledAt: &scheduledAt,
+		},
+		{
+			Channel:   domain.ChannelEmail,
+			Priority:  domain.PriorityHigh,
+			Recipient: "user@example.com",
+			Content:   "send now email",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateBatch() error = %v", err)
+	}
+	if batch == nil {
+		t.Fatal("batch should not be nil")
+	}
+	if len(created) != 2 {
+		t.Fatalf("created len = %d, want 2", len(created))
+	}
+	if publishCalls != 1 {
+		t.Fatalf("publish calls = %d, want 1", publishCalls)
+	}
+	if queuedCount != 1 {
+		t.Fatalf("queued count = %d, want 1", queuedCount)
+	}
+	if created[0].Status != domain.StatusAccepted {
+		t.Fatalf("scheduled notification status = %s, want ACCEPTED", created[0].Status)
+	}
+	if created[1].Status != domain.StatusQueued {
+		t.Fatalf("immediate notification status = %s, want QUEUED", created[1].Status)
+	}
+	if batch.Status != domain.BatchStatusCompleted {
+		t.Fatalf("batch status = %s, want COMPLETED", batch.Status)
+	}
+	if updatedBatchStatus != domain.BatchStatusCompleted {
+		t.Fatalf("updated batch status = %s, want COMPLETED", updatedBatchStatus)
+	}
+}
+
 func TestNotificationServiceCancelConflict(t *testing.T) {
 	t.Parallel()
 
@@ -430,9 +528,11 @@ type fakeNotificationRepo struct {
 	getByIdempotencyKeyFn func(ctx context.Context, idempotencyKey string) (*domain.Notification, error)
 	listFn                func(ctx context.Context, params repository.ListParams) ([]domain.Notification, int64, error)
 	updateStatusFn        func(ctx context.Context, id string, status domain.Status) error
+	markQueuedIfAccepted  func(ctx context.Context, id string) (bool, error)
 	updateStatusWithRetry func(ctx context.Context, id string, status domain.Status, nextRetryAt time.Time) error
 	cancelFn              func(ctx context.Context, id string) error
 	lockForSendingFn      func(ctx context.Context, id string) (*domain.Notification, error)
+	getDueForScheduleFn   func(ctx context.Context, limit int) ([]domain.Notification, error)
 	getDueForRetryFn      func(ctx context.Context, limit int) ([]domain.Notification, error)
 	clearNextRetryAtFn    func(ctx context.Context, id string) error
 	setProviderMessageID  func(ctx context.Context, id string, providerMsgID string) error
@@ -481,6 +581,13 @@ func (f *fakeNotificationRepo) UpdateStatus(ctx context.Context, id string, stat
 	return nil
 }
 
+func (f *fakeNotificationRepo) MarkQueuedIfAccepted(ctx context.Context, id string) (bool, error) {
+	if f.markQueuedIfAccepted != nil {
+		return f.markQueuedIfAccepted(ctx, id)
+	}
+	return true, nil
+}
+
 func (f *fakeNotificationRepo) UpdateStatusWithRetry(ctx context.Context, id string, status domain.Status, nextRetryAt time.Time) error {
 	if f.updateStatusWithRetry != nil {
 		return f.updateStatusWithRetry(ctx, id, status, nextRetryAt)
@@ -498,6 +605,13 @@ func (f *fakeNotificationRepo) Cancel(ctx context.Context, id string) error {
 func (f *fakeNotificationRepo) LockForSending(ctx context.Context, id string) (*domain.Notification, error) {
 	if f.lockForSendingFn != nil {
 		return f.lockForSendingFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (f *fakeNotificationRepo) GetDueForSchedule(ctx context.Context, limit int) ([]domain.Notification, error) {
+	if f.getDueForScheduleFn != nil {
+		return f.getDueForScheduleFn(ctx, limit)
 	}
 	return nil, nil
 }

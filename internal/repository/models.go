@@ -20,6 +20,7 @@ type NotificationModel struct {
 	ProviderMessageID *string         `gorm:"type:varchar(255)"`
 	AttemptCount      int             `gorm:"not null;default:0"`
 	MaxRetries        int             `gorm:"not null;default:5"`
+	ScheduledAt       *time.Time      `gorm:"type:timestamptz"`
 	NextRetryAt       *time.Time
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
@@ -75,6 +76,7 @@ func notificationModelFromDomain(n *domain.Notification) *NotificationModel {
 		ProviderMessageID: n.ProviderMessageID,
 		AttemptCount:      n.AttemptCount,
 		MaxRetries:        n.MaxRetries,
+		ScheduledAt:       n.ScheduledAt,
 		NextRetryAt:       n.NextRetryAt,
 		CreatedAt:         n.CreatedAt,
 		UpdatedAt:         n.UpdatedAt,
@@ -99,6 +101,7 @@ func notificationModelToDomain(m *NotificationModel) *domain.Notification {
 		ProviderMessageID: m.ProviderMessageID,
 		AttemptCount:      m.AttemptCount,
 		MaxRetries:        m.MaxRetries,
+		ScheduledAt:       m.ScheduledAt,
 		NextRetryAt:       m.NextRetryAt,
 		CreatedAt:         m.CreatedAt,
 		UpdatedAt:         m.UpdatedAt,

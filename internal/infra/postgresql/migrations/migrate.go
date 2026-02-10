@@ -10,6 +10,7 @@ func Migrations() []*gormigrate.Migration {
 		createNotificationsTable(),
 		createNotificationsAttemptsTable(),
 		createBatchesTable(),
+		addNotificationsScheduledAtColumn(),
 	}
 }
 

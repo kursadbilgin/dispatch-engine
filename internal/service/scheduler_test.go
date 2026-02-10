@@ -11,27 +11,27 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestNewRetryScannerAppliesDefaults(t *testing.T) {
+func TestNewSchedulerAppliesDefaults(t *testing.T) {
 	t.Parallel()
 
-	scanner, err := NewRetryScanner(&fakeNotificationRepo{}, &fakePublisher{}, 0, 0, nil)
+	scheduler, err := NewScheduler(&fakeNotificationRepo{}, &fakePublisher{}, 0, 0, nil)
 	if err != nil {
-		t.Fatalf("NewRetryScanner() error = %v", err)
+		t.Fatalf("NewScheduler() error = %v", err)
 	}
-	if scanner.interval != defaultRetryScanInterval {
-		t.Fatalf("interval = %s, want %s", scanner.interval, defaultRetryScanInterval)
+	if scheduler.interval != defaultSchedulerScanInterval {
+		t.Fatalf("interval = %s, want %s", scheduler.interval, defaultSchedulerScanInterval)
 	}
-	if scanner.limit != defaultRetryScanLimit {
-		t.Fatalf("limit = %d, want %d", scanner.limit, defaultRetryScanLimit)
+	if scheduler.limit != defaultSchedulerScanLimit {
+		t.Fatalf("limit = %d, want %d", scheduler.limit, defaultSchedulerScanLimit)
 	}
 }
 
-func TestRetryScannerScanDuePublishesNotifications(t *testing.T) {
+func TestSchedulerScanDuePublishesAndMarksQueued(t *testing.T) {
 	t.Parallel()
 
-	cleared := make([]string, 0, 2)
+	marked := make([]string, 0, 2)
 	repo := &fakeNotificationRepo{
-		getDueForRetryFn: func(ctx context.Context, limit int) ([]domain.Notification, error) {
+		getDueForScheduleFn: func(ctx context.Context, limit int) ([]domain.Notification, error) {
 			if limit != 100 {
 				t.Fatalf("limit = %d, want 100", limit)
 			}
@@ -50,9 +50,9 @@ func TestRetryScannerScanDuePublishesNotifications(t *testing.T) {
 				},
 			}, nil
 		},
-		clearNextRetryAtFn: func(ctx context.Context, id string) error {
-			cleared = append(cleared, id)
-			return nil
+		markQueuedIfAccepted: func(ctx context.Context, id string) (bool, error) {
+			marked = append(marked, id)
+			return true, nil
 		},
 	}
 
@@ -64,12 +64,12 @@ func TestRetryScannerScanDuePublishesNotifications(t *testing.T) {
 		},
 	}
 
-	scanner, err := NewRetryScanner(repo, publisher, 5*time.Second, 100, zap.NewNop())
+	scheduler, err := NewScheduler(repo, publisher, 5*time.Second, 100, zap.NewNop())
 	if err != nil {
-		t.Fatalf("NewRetryScanner() error = %v", err)
+		t.Fatalf("NewScheduler() error = %v", err)
 	}
 
-	if err := scanner.scanDue(context.Background()); err != nil {
+	if err := scheduler.scanDue(context.Background()); err != nil {
 		t.Fatalf("scanDue() error = %v", err)
 	}
 
@@ -82,20 +82,25 @@ func TestRetryScannerScanDuePublishesNotifications(t *testing.T) {
 	if published[1] != "email:n-email-1" {
 		t.Fatalf("second published = %s, want email:n-email-1", published[1])
 	}
-	if len(cleared) != 2 {
-		t.Fatalf("clearNextRetryAt count = %d, want 2", len(cleared))
+	if len(marked) != 2 {
+		t.Fatalf("markQueuedIfAccepted count = %d, want 2", len(marked))
 	}
 }
 
-func TestRetryScannerScanDueContinuesOnPublishError(t *testing.T) {
+func TestSchedulerScanDueContinuesOnPublishError(t *testing.T) {
 	t.Parallel()
 
+	marked := 0
 	repo := &fakeNotificationRepo{
-		getDueForRetryFn: func(ctx context.Context, limit int) ([]domain.Notification, error) {
+		getDueForScheduleFn: func(ctx context.Context, limit int) ([]domain.Notification, error) {
 			return []domain.Notification{
 				{ID: "n1", Channel: domain.ChannelSMS, Priority: domain.PriorityNormal},
 				{ID: "n2", Channel: domain.ChannelPush, Priority: domain.PriorityNormal},
 			}, nil
+		},
+		markQueuedIfAccepted: func(ctx context.Context, id string) (bool, error) {
+			marked++
+			return true, nil
 		},
 	}
 
@@ -110,52 +115,55 @@ func TestRetryScannerScanDueContinuesOnPublishError(t *testing.T) {
 		},
 	}
 
-	scanner, err := NewRetryScanner(repo, publisher, time.Second, 100, zap.NewNop())
+	scheduler, err := NewScheduler(repo, publisher, time.Second, 100, zap.NewNop())
 	if err != nil {
-		t.Fatalf("NewRetryScanner() error = %v", err)
+		t.Fatalf("NewScheduler() error = %v", err)
 	}
 
-	if err := scanner.scanDue(context.Background()); err != nil {
+	if err := scheduler.scanDue(context.Background()); err != nil {
 		t.Fatalf("scanDue() error = %v", err)
 	}
 
 	if calls != 2 {
 		t.Fatalf("publish calls = %d, want 2", calls)
 	}
+	if marked != 1 {
+		t.Fatalf("marked count = %d, want 1", marked)
+	}
 }
 
-func TestRetryScannerScanDueRepositoryError(t *testing.T) {
+func TestSchedulerScanDueRepositoryError(t *testing.T) {
 	t.Parallel()
 
 	repo := &fakeNotificationRepo{
-		getDueForRetryFn: func(ctx context.Context, limit int) ([]domain.Notification, error) {
+		getDueForScheduleFn: func(ctx context.Context, limit int) ([]domain.Notification, error) {
 			return nil, errors.New("db unavailable")
 		},
 	}
 
-	scanner, err := NewRetryScanner(repo, &fakePublisher{}, time.Second, 100, zap.NewNop())
+	scheduler, err := NewScheduler(repo, &fakePublisher{}, time.Second, 100, zap.NewNop())
 	if err != nil {
-		t.Fatalf("NewRetryScanner() error = %v", err)
+		t.Fatalf("NewScheduler() error = %v", err)
 	}
 
-	err = scanner.scanDue(context.Background())
+	err = scheduler.scanDue(context.Background())
 	if err == nil {
 		t.Fatal("expected scanDue() error")
 	}
 }
 
-func TestRetryScannerStartReturnsOnContextCancel(t *testing.T) {
+func TestSchedulerStartReturnsOnContextCancel(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	scanner, err := NewRetryScanner(&fakeNotificationRepo{}, &fakePublisher{}, time.Second, 100, zap.NewNop())
+	scheduler, err := NewScheduler(&fakeNotificationRepo{}, &fakePublisher{}, time.Second, 100, zap.NewNop())
 	if err != nil {
-		t.Fatalf("NewRetryScanner() error = %v", err)
+		t.Fatalf("NewScheduler() error = %v", err)
 	}
 
-	if err := scanner.Start(ctx); err != nil {
+	if err := scheduler.Start(ctx); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 }

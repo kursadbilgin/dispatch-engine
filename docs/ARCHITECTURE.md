@@ -16,9 +16,11 @@ flowchart LR
   Worker --> Redis
   Retry[Retry Scanner] --> PG
   Retry --> RMQ
+  Scheduler[Scheduler Scanner] --> PG
+  Scheduler --> RMQ
 ```
 
-The system uses a single-binary model: API, worker, and retry scanner run in the same process.
+The system uses a single-binary model: API, worker, retry scanner, and scheduler run in the same process.
 
 ## 2. Layers
 
@@ -30,7 +32,7 @@ The system uses a single-binary model: API, worker, and retry scanner run in the
 ### Application Service
 - Path: `internal/service`
 - Responsibility: business workflow orchestration
-- Main services: `NotificationService`, `WorkerService`, `RetryScanner`
+- Main services: `NotificationService`, `WorkerService`, `RetryScanner`, `Scheduler`
 
 ### Transport (HTTP)
 - Path: `internal/handler`
@@ -53,7 +55,7 @@ The system uses a single-binary model: API, worker, and retry scanner run in the
 - identity: `id`, `correlation_id`, `idempotency_key`, `batch_id`
 - routing: `channel`, `priority`
 - payload: `recipient`, `content`
-- lifecycle: `status`, `attempt_count`, `max_retries`, `next_retry_at`
+- lifecycle: `status`, `attempt_count`, `max_retries`, `scheduled_at`, `next_retry_at`
 - provider: `provider_message_id`
 - timestamps: `created_at`, `updated_at`
 
@@ -78,6 +80,7 @@ Migrations define these indexes:
 - `idx_notifications_batch_id` (partial)
 - `idx_notifications_idempotency_key` (unique partial)
 - `idx_notifications_retry` (partial)
+- `idx_notifications_scheduled_due` (partial)
 - `idx_notifications_correlation_id`
 - `idx_attempts_notification_id`
 
@@ -109,7 +112,7 @@ Priority mapping:
 ```mermaid
 stateDiagram-v2
   [*] --> ACCEPTED
-  ACCEPTED --> QUEUED
+  ACCEPTED --> QUEUED: immediate create or scheduled due
   QUEUED --> SENDING
   SENDING --> SENT
   SENDING --> FAILED
@@ -125,8 +128,8 @@ stateDiagram-v2
 1. Handler parses and validates request.
 2. `NotificationService.Create`:
 - persists notification as `ACCEPTED`
-- publishes to channel queue in RabbitMQ
-- updates status to `QUEUED`
+- if `scheduledAt` is in the future: returns without enqueue (stays `ACCEPTED`)
+- otherwise publishes to channel queue in RabbitMQ and updates status to `QUEUED`
 3. API returns `202 Accepted`.
 
 Note: if publish fails, the notification is marked as `FAILED` to avoid stuck `ACCEPTED` records.
@@ -143,7 +146,18 @@ Note: if publish fails, the notification is marked as `FAILED` to avoid stuck `A
 - transient failure with retries left: `QUEUED` + `next_retry_at`
 - permanent failure or retries exhausted: `FAILED`
 
-## 9. Retry Mechanism
+## 9. Schedule Mechanism
+
+`Scheduler` periodically scans:
+- `status=ACCEPTED AND scheduled_at <= now AND scheduled_at IS NOT NULL`
+
+For each due record:
+1. Publish message to channel queue.
+2. Transition status with conditional update (`ACCEPTED -> QUEUED`).
+
+This keeps PostgreSQL as source of truth and avoids enqueueing future notifications early.
+
+## 10. Retry Mechanism
 
 `RetryScanner` periodically scans:
 - `status=QUEUED AND next_retry_at <= now`
@@ -156,7 +170,7 @@ Backoff policy:
 - max delay: `60s`
 - jitter: `0..250ms`
 
-## 10. Rate Limiting Design
+## 11. Rate Limiting Design
 
 `RedisRateLimiter` uses per-channel per-second windows:
 - key: `ratelimit:<channel>:<unix-second>`
@@ -166,7 +180,7 @@ Backoff policy:
 
 This approach remains consistent across multiple replicas.
 
-## 11. Error Mapping and HTTP Behavior
+## 12. Error Mapping and HTTP Behavior
 
 Domain errors are mapped to HTTP status codes:
 - `ErrValidation` -> `400`
@@ -180,7 +194,7 @@ Global error handler returns:
 {"error":"..."}
 ```
 
-## 12. Observability
+## 13. Observability
 
 - Logging: Zap structured logger
 - Metrics: Prometheus counters/histograms/gauges
@@ -188,7 +202,7 @@ Global error handler returns:
 - `/livez`: process liveness
 - `/readyz`: PostgreSQL + Redis readiness
 
-## 13. Trade-off: Single Binary
+## 14. Trade-off: Single Binary
 
 Why single binary in this project:
 - simpler operations

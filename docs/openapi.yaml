@@ -341,6 +341,11 @@ components:
           type: integer
           nullable: true
           description: If null or <= 0, service default is used.
+        scheduledAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Optional RFC3339 timestamp. If set in the future, notification stays ACCEPTED until scheduler enqueues it.
 
     CreateBatchRequest:
       type: object
@@ -393,6 +398,10 @@ components:
           type: integer
         maxRetries:
           type: integer
+        scheduledAt:
+          type: string
+          format: date-time
+          nullable: true
         nextRetryAt:
           type: string
           format: date-time

@@ -74,6 +74,50 @@ func TestNotificationIntegration_CreateNotification(t *testing.T) {
 	}
 }
 
+func TestNotificationIntegration_CreateNotificationScheduledAt(t *testing.T) {
+	t.Parallel()
+
+	expectedScheduledAt, _ := time.Parse(time.RFC3339, "2026-03-01T10:00:00Z")
+	svc := &stubNotificationService{
+		createFn: func(ctx context.Context, n *domain.Notification) (*domain.Notification, error) {
+			if n.ScheduledAt == nil {
+				t.Fatal("ScheduledAt should be parsed from request")
+			}
+			if !n.ScheduledAt.Equal(expectedScheduledAt) {
+				t.Fatalf("ScheduledAt = %v, want %v", n.ScheduledAt, expectedScheduledAt)
+			}
+			n.ID = "n-scheduled"
+			n.Status = domain.StatusAccepted
+			return n, nil
+		},
+	}
+
+	app := newNotificationTestApp(t, svc)
+
+	validBody := `{"channel":"sms","priority":"normal","recipient":"+905551112233","content":"hello","scheduledAt":"2026-03-01T10:00:00Z"}`
+	resp, body := performRequest(t, app, http.MethodPost, "/v1/notifications", validBody)
+	if resp.StatusCode != fiber.StatusAccepted {
+		t.Fatalf("status = %d, want 202, body=%s", resp.StatusCode, string(body))
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("json unmarshal error = %v", err)
+	}
+	if parsed["scheduledAt"] != "2026-03-01T10:00:00Z" {
+		t.Fatalf("scheduledAt = %v, want 2026-03-01T10:00:00Z", parsed["scheduledAt"])
+	}
+	if parsed["status"] != domain.StatusAccepted.String() {
+		t.Fatalf("status = %v, want %s", parsed["status"], domain.StatusAccepted.String())
+	}
+
+	invalidBody := `{"channel":"sms","priority":"normal","recipient":"+905551112233","content":"hello","scheduledAt":"invalid-date"}`
+	resp, _ = performRequest(t, app, http.MethodPost, "/v1/notifications", invalidBody)
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for invalid scheduledAt", resp.StatusCode)
+	}
+}
+
 func TestNotificationIntegration_CreateBatch(t *testing.T) {
 	t.Parallel()
 

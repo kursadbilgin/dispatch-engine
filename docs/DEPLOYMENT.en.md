@@ -70,7 +70,7 @@ go build -o bin/api ./cmd/api
 
 Notes:
 - DB migrations run automatically on startup.
-- Worker and retry scanner start in the same process.
+- Worker, retry scanner, and scheduler start in the same process.
 
 ## 6. Startup Sequence and Health Checks
 
@@ -81,7 +81,7 @@ Startup flow:
 4. Connect Redis
 5. Connect RabbitMQ and declare topology
 6. Start HTTP server
-7. Start worker and retry scanner goroutines
+7. Start worker, retry scanner, and scheduler goroutines
 
 Health endpoints:
 - `GET /livez` -> `200`
@@ -168,4 +168,5 @@ PostgreSQL 18 migration note:
 
 ### Retry backlog grows
 - Revisit `RETRY_SCAN_INTERVAL` and `RETRY_SCAN_LIMIT` values.
+- Revisit `SCHEDULER_SCAN_INTERVAL` and `SCHEDULER_SCAN_LIMIT` if scheduled notifications are delayed.
 - Verify `RATE_LIMIT_PER_SEC` is not too low.

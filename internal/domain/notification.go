@@ -111,6 +111,7 @@ type Notification struct {
 	ProviderMessageID *string
 	AttemptCount      int
 	MaxRetries        int
+	ScheduledAt       *time.Time
 	NextRetryAt       *time.Time
 	CreatedAt         time.Time
 	UpdatedAt         time.Time

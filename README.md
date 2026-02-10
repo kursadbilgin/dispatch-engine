@@ -49,7 +49,7 @@ Stack: Go 1.25.6, Fiber v2, PostgreSQL, RabbitMQ, Redis, Prometheus, Zap.
 
 Layered model:
 - Transport: Fiber handlers and middleware
-- Application: Notification service, worker service, retry scanner
+- Application: Notification service, worker service, retry scanner, scheduler
 - Domain: Notification/batch/attempt entities and rules
 - Infrastructure: PostgreSQL repository, RabbitMQ adapter, Redis rate limiter, webhook provider
 
@@ -59,6 +59,7 @@ Key capabilities:
 - Idempotency with unique index on `idempotency_key`
 - Retry with exponential backoff + jitter
 - Distributed per-channel rate limiting via Redis (`INCR` + `EXPIRE`)
+- Scheduled notifications via `scheduledAt` + scheduler scanner
 - Health probes (`/livez`, `/readyz`) and metrics (`/metrics`)
 
 See [docs/ARCHITECTURE.en.md](docs/ARCHITECTURE.md) for details.
@@ -77,6 +78,8 @@ Core environment variables:
 | `WORKER_CONCURRENCY` | No | `16` | Worker goroutine count |
 | `RETRY_SCAN_INTERVAL` | No | `5s` | Retry scanner interval |
 | `RETRY_SCAN_LIMIT` | No | `100` | Retry records per scan |
+| `SCHEDULER_SCAN_INTERVAL` | No | `5s` | Scheduled notification scanner interval |
+| `SCHEDULER_SCAN_LIMIT` | No | `100` | Scheduled records processed per scan |
 | `API_PORT` | No | `8080` | HTTP server port |
 | `LOG_LEVEL` | No | `info` | Logger level |
 
@@ -118,7 +121,7 @@ dispatch-engine/
 │   └── service/             # Application services
 ├── docs/                    # Documentation
 ├── postman/                 # Postman collection + environment
-├── openapi.yaml             # API contract
+├── docs/openapi.yaml        # API contract
 ├── docker-compose.yml       # Local orchestration
 └── Dockerfile               # Container image
 ```
