@@ -29,6 +29,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.RateLimitPerSec != 100 {
 		t.Errorf("RateLimitPerSec = %d, want 100", cfg.RateLimitPerSec)
 	}
+	if cfg.WorkerConcurrency != 16 {
+		t.Errorf("WorkerConcurrency = %d, want 16", cfg.WorkerConcurrency)
+	}
 }
 
 func TestLoad_CustomValues(t *testing.T) {
@@ -36,6 +39,7 @@ func TestLoad_CustomValues(t *testing.T) {
 	t.Setenv("API_PORT", "9090")
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("RATE_LIMIT_PER_SEC", "250")
+	t.Setenv("WORKER_CONCURRENCY", "8")
 
 	cfg, err := Load()
 	if err != nil {
@@ -50,6 +54,9 @@ func TestLoad_CustomValues(t *testing.T) {
 	}
 	if cfg.RateLimitPerSec != 250 {
 		t.Errorf("RateLimitPerSec = %d, want 250", cfg.RateLimitPerSec)
+	}
+	if cfg.WorkerConcurrency != 8 {
+		t.Errorf("WorkerConcurrency = %d, want 8", cfg.WorkerConcurrency)
 	}
 }
 

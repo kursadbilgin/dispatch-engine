@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kursadbilgin/dispatch-engine/internal/ratelimit"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -17,26 +16,12 @@ const (
 	windowSeconds            = 1
 )
 
-var allowScript = goredis.NewScript(`
-local current = redis.call("INCR", KEYS[1])
-if current == 1 then
-  redis.call("EXPIRE", KEYS[1], ARGV[2])
-end
-if current > tonumber(ARGV[1]) then
-  return 0
-end
-return 1
-`)
-
-var _ ratelimit.RateLimiter = (*RedisRateLimiter)(nil)
-
 // RedisRateLimiter is a distributed per-second rate limiter backed by Redis.
 type RedisRateLimiter struct {
 	client      *goredis.Client
 	limitPerSec int64
 	now         func() time.Time
 	sleep       func(ctx context.Context, d time.Duration) error
-	script      *goredis.Script
 }
 
 func NewRedisRateLimiter(client *goredis.Client, limitPerSec int) (*RedisRateLimiter, error) {
@@ -72,12 +57,11 @@ func newRedisRateLimiter(
 		limitPerSec: limitPerSec,
 		now:         nowFn,
 		sleep:       sleepFn,
-		script:      allowScript,
 	}, nil
 }
 
 func (r *RedisRateLimiter) Allow(ctx context.Context, channel string) (bool, error) {
-	if r == nil || r.client == nil || r.script == nil {
+	if r == nil || r.client == nil {
 		return false, fmt.Errorf("rate limiter is not initialized")
 	}
 
@@ -91,12 +75,22 @@ func (r *RedisRateLimiter) Allow(ctx context.Context, channel string) (bool, err
 	}
 
 	key := fmt.Sprintf("ratelimit:%s:%d", normalizedChannel, r.now().UTC().Unix())
-	result, err := r.script.Run(ctx, r.client, []string{key}, r.limitPerSec, windowSeconds).Int()
+	window := time.Duration(windowSeconds) * time.Second
+
+	var incrCmd *goredis.IntCmd
+	_, err := r.client.TxPipelined(ctx, func(pipe goredis.Pipeliner) error {
+		incrCmd = pipe.Incr(ctx, key)
+		pipe.Expire(ctx, key, window)
+		return nil
+	})
 	if err != nil {
 		return false, fmt.Errorf("failed to evaluate rate limit: %w", err)
 	}
+	if incrCmd == nil {
+		return false, fmt.Errorf("failed to evaluate rate limit: missing INCR result")
+	}
 
-	return result == 1, nil
+	return incrCmd.Val() <= r.limitPerSec, nil
 }
 
 func (r *RedisRateLimiter) Wait(ctx context.Context, channel string) error {
