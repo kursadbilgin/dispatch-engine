@@ -63,7 +63,7 @@ func main() {
 		logger.Fatal("postgres initialization failed", zap.Error(err))
 	}
 
-	if err := migrations.Migrate(db); err != nil {
+	if err := migrations.Run(db); err != nil {
 		logger.Fatal("database migrations failed", zap.Error(err))
 	}
 
