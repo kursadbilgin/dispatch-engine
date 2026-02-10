@@ -5,7 +5,6 @@ bin/
 *.dll
 *.so
 *.dylib
-api
 
 # Test binary
 *.test
@@ -36,3 +35,4 @@ Thumbs.db
 tmp/
 
 .gocache/
+.gomodcache/

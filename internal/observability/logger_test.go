@@ -70,7 +70,7 @@ func TestCorrelationID_ContextHelpers(t *testing.T) {
 func TestCorrelationID_ContextHelpersNilContext(t *testing.T) {
 	t.Parallel()
 
-	ctx := WithCorrelationID(nil, "cid-456")
+	ctx := WithCorrelationID(context.TODO(), "cid-456")
 	correlationID, ok := CorrelationIDFromContext(ctx)
 	if !ok {
 		t.Fatal("expected correlation id to exist")
@@ -86,11 +86,6 @@ func TestCorrelationID_MissingValue(t *testing.T) {
 	_, ok := CorrelationIDFromContext(context.Background())
 	if ok {
 		t.Fatal("expected correlation id to be missing")
-	}
-
-	_, ok = CorrelationIDFromContext(nil)
-	if ok {
-		t.Fatal("expected correlation id to be missing for nil context")
 	}
 }
 

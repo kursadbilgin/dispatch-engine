@@ -20,10 +20,10 @@ import (
 )
 
 const (
-	defaultWorkerConcurrency = 3
-	maxRetryDelay            = 60 * time.Second
-	baseRetryDelay           = time.Second
-	maxRetryJitterMillis     = 250
+	minWorkerConcurrency = 1
+	maxRetryDelay        = 60 * time.Second
+	baseRetryDelay       = time.Second
+	maxRetryJitterMillis = 250
 )
 
 type WorkerService struct {
@@ -63,8 +63,8 @@ func NewWorkerService(
 	if rateLimiter == nil {
 		return nil, fmt.Errorf("rate limiter is required")
 	}
-	if concurrency < defaultWorkerConcurrency {
-		concurrency = defaultWorkerConcurrency
+	if concurrency < minWorkerConcurrency {
+		concurrency = minWorkerConcurrency
 	}
 	if logger == nil {
 		logger = zap.NewNop()

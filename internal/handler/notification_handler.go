@@ -286,6 +286,9 @@ func parseListParams(c *fiber.Ctx) (repository.ListParams, error) {
 	if err != nil {
 		return repository.ListParams{}, err
 	}
+	if from != nil && to != nil && from.After(*to) {
+		return repository.ListParams{}, fmt.Errorf("%w: from must be <= to", domain.ErrValidation)
+	}
 	params.From = from
 	params.To = to
 

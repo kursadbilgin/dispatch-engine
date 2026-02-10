@@ -7,21 +7,27 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.uber.org/zap"
 )
 
 type RabbitMQConsumer struct {
 	client   *RabbitMQ
 	prefetch int
+	logger   *zap.Logger
 }
 
-func NewRabbitMQConsumer(client *RabbitMQ, prefetch int) *RabbitMQConsumer {
+func NewRabbitMQConsumer(client *RabbitMQ, prefetch int, logger *zap.Logger) *RabbitMQConsumer {
 	if prefetch < 1 {
 		prefetch = 1
+	}
+	if logger == nil {
+		logger = zap.NewNop()
 	}
 
 	return &RabbitMQConsumer{
 		client:   client,
 		prefetch: prefetch,
+		logger:   logger,
 	}
 }
 
@@ -65,7 +71,7 @@ func (c *RabbitMQConsumer) consumeOnce(ctx context.Context, queue string, handle
 	if err != nil {
 		return err
 	}
-	defer ch.Close()
+	defer ch.Close() //nolint:errcheck // best-effort channel close
 
 	if err := ch.Qos(c.prefetch, 0, false); err != nil {
 		return fmt.Errorf("failed to set qos: %w", err)
@@ -103,6 +109,10 @@ func (c *RabbitMQConsumer) consumeOnce(ctx context.Context, queue string, handle
 func (c *RabbitMQConsumer) handleDelivery(ctx context.Context, d amqp.Delivery, handler MessageHandler) error {
 	var msg NotificationMessage
 	if err := json.Unmarshal(d.Body, &msg); err != nil {
+		c.logger.Warn("rejecting message: invalid JSON",
+			zap.Error(err),
+			zap.String("routingKey", d.RoutingKey),
+		)
 		if rejectErr := d.Reject(false); rejectErr != nil {
 			return fmt.Errorf("failed to reject invalid message: %w", rejectErr)
 		}
@@ -110,6 +120,10 @@ func (c *RabbitMQConsumer) handleDelivery(ctx context.Context, d amqp.Delivery, 
 	}
 
 	if err := msg.Validate(); err != nil {
+		c.logger.Warn("rejecting message: validation failed",
+			zap.Error(err),
+			zap.String("notificationId", msg.NotificationID),
+		)
 		if rejectErr := d.Reject(false); rejectErr != nil {
 			return fmt.Errorf("failed to reject invalid payload: %w", rejectErr)
 		}

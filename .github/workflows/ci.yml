@@ -11,10 +11,20 @@ on:
       - "v*"
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.25.x"
+  GOLANGCI_LINT_VERSION: "v1.64.8"
+  GOVULNCHECK_VERSION: "latest"
+
 jobs:
   ci:
     name: Lint, Test, Build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -24,8 +34,12 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
           cache: true
+
+      - name: Print Go version
+        run: go version
 
       - name: Download dependencies
         run: go mod download
@@ -43,10 +57,12 @@ jobs:
           fi
 
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}
 
       - name: Lint
-        run: "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m ./...
+        run: |
+          "$(go env GOPATH)/bin/golangci-lint" version
+          "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m ./...
 
       - name: Run unit tests with race and coverage
         run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
@@ -56,7 +72,7 @@ jobs:
 
       - name: Security scan (govulncheck)
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
           "$(go env GOPATH)/bin/govulncheck" ./...
 
       - name: Upload coverage artifact

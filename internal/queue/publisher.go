@@ -37,7 +37,7 @@ func (p *RabbitMQPublisher) Publish(ctx context.Context, queue string, msg Notif
 	if err != nil {
 		return err
 	}
-	defer ch.Close()
+	defer ch.Close() //nolint:errcheck // best-effort channel close
 
 	publishing := amqp.Publishing{
 		ContentType:   "application/json",

@@ -1,5 +1,6 @@
 run:
   timeout: 5m
+  modules-download-mode: readonly
 
 linters:
   disable-all: true
@@ -7,6 +8,10 @@ linters:
     - govet
     - ineffassign
     - typecheck
+    - errcheck
+    - staticcheck
+    - gosimple
+    - unused
 
 issues:
   exclude-use-default: false

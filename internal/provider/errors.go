@@ -64,7 +64,7 @@ func IsTransient(err error) bool {
 
 	var netErr net.Error
 	if errors.As(err, &netErr) {
-		return netErr.Timeout() || netErr.Temporary()
+		return netErr.Timeout()
 	}
 
 	return false

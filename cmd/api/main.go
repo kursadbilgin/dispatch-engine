@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/recover"
@@ -38,6 +40,8 @@ type appDependencies struct {
 	publisher           queue.Publisher
 	consumer            queue.Consumer
 	notificationService *service.NotificationService
+	workerService       *service.WorkerService
+	retryScanner        *service.RetryScanner
 	provider            provider.Provider
 	rateLimiter         ratelimit.RateLimiter
 }
@@ -45,12 +49,12 @@ type appDependencies struct {
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatal("failed to load config", zap.Error(err))
+		log.Fatalf("failed to load config: %v", err)
 	}
 
 	logger, err := observability.NewLogger(cfg.LogLevel)
 	if err != nil {
-		log.Fatal("failed to initialize logger", zap.Error(err))
+		log.Fatalf("failed to initialize logger: %v", err)
 	}
 	defer logger.Sync() //nolint:errcheck
 
@@ -83,13 +87,18 @@ func main() {
 		ErrorHandler: handler.ErrorHandler(logger),
 	})
 
+	metrics := observability.NewMetrics()
+
 	app.Use(recover.New())
 	app.Use(requestid.New())
 	app.Use(cors.New())
+	app.Use(metrics.HTTPMiddleware())
+
+	app.Get("/metrics", adaptor.HTTPHandler(metrics.Handler()))
 
 	handler.RegisterHealthRoutes(app, sqlDB, rdb)
 
-	deps, err := wireDependencies(cfg, db, rdb, rmq)
+	deps, err := wireDependencies(cfg, db, rdb, rmq, logger, metrics)
 	if err != nil {
 		logger.Fatal("dependency wiring failed", zap.Error(err))
 	}
@@ -98,10 +107,26 @@ func main() {
 		logger.Fatal("notification route registration failed", zap.Error(err))
 	}
 
-	// Worker goroutines will be started in Task 16 once worker service is introduced.
-
 	signalCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	workerErrCh := make(chan error, 1)
+	go func() {
+		if err := deps.workerService.Start(signalCtx); err != nil {
+			workerErrCh <- err
+			return
+		}
+		workerErrCh <- nil
+	}()
+
+	retryScannerErrCh := make(chan error, 1)
+	go func() {
+		if err := deps.retryScanner.Start(signalCtx); err != nil {
+			retryScannerErrCh <- err
+			return
+		}
+		retryScannerErrCh <- nil
+	}()
 
 	listenErrCh := make(chan error, 1)
 	go func() {
@@ -121,8 +146,20 @@ func main() {
 		if err != nil {
 			logger.Error("fiber listen failed", zap.Error(err))
 		}
+		stop()
+	case err := <-workerErrCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("worker stopped with error", zap.Error(err))
+		}
+		stop()
+	case err := <-retryScannerErrCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("retry scanner stopped with error", zap.Error(err))
+		}
+		stop()
 	}
 
+	stop()
 	logger.Info("shutting down server")
 	if err := app.ShutdownWithTimeout(shutdownTimeout); err != nil {
 		logger.Error("server forced shutdown", zap.Error(err))
@@ -140,15 +177,17 @@ func wireDependencies(
 	db *gorm.DB,
 	rdb *goredis.Client,
 	rmq *queue.RabbitMQ,
+	logger *zap.Logger,
+	metrics *observability.Metrics,
 ) (*appDependencies, error) {
 	notificationRepo := repository.NewGormNotificationRepo(db)
 	batchRepo := repository.NewGormBatchRepo(db)
 	attemptRepo := repository.NewGormAttemptRepo(db)
 
 	publisher := queue.NewRabbitMQPublisher(rmq)
-	consumer := queue.NewRabbitMQConsumer(rmq, 1)
+	consumer := queue.NewRabbitMQConsumer(rmq, 1, logger)
 
-	notificationService, err := service.NewNotificationService(notificationRepo, batchRepo, publisher)
+	notificationService, err := service.NewNotificationService(notificationRepo, batchRepo, publisher, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize notification service: %w", err)
 	}
@@ -163,6 +202,31 @@ func wireDependencies(
 		return nil, fmt.Errorf("failed to initialize rate limiter: %w", err)
 	}
 
+	workerService, err := service.NewWorkerService(
+		notificationRepo,
+		attemptRepo,
+		consumer,
+		webhookProvider,
+		redisRateLimiter,
+		cfg.WorkerConcurrency,
+		logger,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize worker service: %w", err)
+	}
+	workerService.SetMetrics(metrics)
+
+	retryScanner, err := service.NewRetryScanner(
+		notificationRepo,
+		publisher,
+		cfg.RetryScanInterval,
+		cfg.RetryScanLimit,
+		logger,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize retry scanner: %w", err)
+	}
+
 	return &appDependencies{
 		notificationRepo:    notificationRepo,
 		batchRepo:           batchRepo,
@@ -170,6 +234,8 @@ func wireDependencies(
 		publisher:           publisher,
 		consumer:            consumer,
 		notificationService: notificationService,
+		workerService:       workerService,
+		retryScanner:        retryScanner,
 		provider:            webhookProvider,
 		rateLimiter:         redisRateLimiter,
 	}, nil

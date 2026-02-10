@@ -3,11 +3,11 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/kursadbilgin/dispatch-engine/internal/domain"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type ListParams struct {
@@ -35,6 +35,7 @@ type NotificationRepository interface {
 	Cancel(ctx context.Context, id string) error
 	LockForSending(ctx context.Context, id string) (*domain.Notification, error)
 	GetDueForRetry(ctx context.Context, limit int) ([]domain.Notification, error)
+	ClearNextRetryAt(ctx context.Context, id string) error
 	SetProviderMessageID(ctx context.Context, id string, providerMsgID string) error
 	GetBatchSummary(ctx context.Context, batchID string) ([]BatchSummary, error)
 }
@@ -207,9 +208,32 @@ func (r *GormNotificationRepo) Cancel(ctx context.Context, id string) error {
 
 func (r *GormNotificationRepo) LockForSending(ctx context.Context, id string) (*domain.Notification, error) {
 	var model NotificationModel
+	claimQuery := `
+UPDATE notifications
+SET status = ?, updated_at = NOW()
+WHERE id = ? AND status IN (?, ?)
+RETURNING *
+`
+	if err := r.db.WithContext(ctx).
+		Raw(
+			claimQuery,
+			domain.StatusSending,
+			id,
+			domain.StatusAccepted,
+			domain.StatusQueued,
+		).
+		Scan(&model).Error; err != nil {
+		return nil, err
+	}
+
+	if strings.TrimSpace(model.ID) != "" {
+		return notificationModelToDomain(&model), nil
+	}
+
+	var existing NotificationModel
 	err := r.db.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		First(&model, "id = ?", id).Error
+		Select("id", "status").
+		First(&existing, "id = ?", id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, domain.ErrNotFound
 	}
@@ -217,20 +241,13 @@ func (r *GormNotificationRepo) LockForSending(ctx context.Context, id string) (*
 		return nil, err
 	}
 
-	// Skip if already in a terminal or sending state
-	switch model.Status {
+	// Already claimed by another worker or reached terminal state.
+	switch existing.Status {
 	case domain.StatusCanceled, domain.StatusSent, domain.StatusFailed, domain.StatusSending:
 		return nil, nil
+	default:
+		return nil, nil
 	}
-
-	model.Status = domain.StatusSending
-	if err := r.db.WithContext(ctx).
-		Model(&model).
-		Update("status", domain.StatusSending).Error; err != nil {
-		return nil, err
-	}
-
-	return notificationModelToDomain(&model), nil
 }
 
 func (r *GormNotificationRepo) GetDueForRetry(ctx context.Context, limit int) ([]domain.Notification, error) {
@@ -252,11 +269,32 @@ func (r *GormNotificationRepo) GetDueForRetry(ctx context.Context, limit int) ([
 	return notifications, nil
 }
 
-func (r *GormNotificationRepo) SetProviderMessageID(ctx context.Context, id string, providerMsgID string) error {
-	return r.db.WithContext(ctx).
+func (r *GormNotificationRepo) ClearNextRetryAt(ctx context.Context, id string) error {
+	result := r.db.WithContext(ctx).
 		Model(&NotificationModel{}).
 		Where("id = ?", id).
-		Update("provider_message_id", providerMsgID).Error
+		Update("next_retry_at", nil)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (r *GormNotificationRepo) SetProviderMessageID(ctx context.Context, id string, providerMsgID string) error {
+	result := r.db.WithContext(ctx).
+		Model(&NotificationModel{}).
+		Where("id = ?", id).
+		Update("provider_message_id", providerMsgID)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
 func (r *GormNotificationRepo) GetBatchSummary(ctx context.Context, batchID string) ([]BatchSummary, error) {

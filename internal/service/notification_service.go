@@ -10,6 +10,7 @@ import (
 	"github.com/kursadbilgin/dispatch-engine/internal/domain"
 	"github.com/kursadbilgin/dispatch-engine/internal/queue"
 	"github.com/kursadbilgin/dispatch-engine/internal/repository"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -22,6 +23,7 @@ type NotificationService struct {
 	notifications repository.NotificationRepository
 	batches       repository.BatchRepository
 	publisher     queue.Publisher
+	logger        *zap.Logger
 }
 
 type BatchSummary struct {
@@ -40,6 +42,7 @@ func NewNotificationService(
 	notifications repository.NotificationRepository,
 	batches repository.BatchRepository,
 	publisher queue.Publisher,
+	logger *zap.Logger,
 ) (*NotificationService, error) {
 	if notifications == nil {
 		return nil, fmt.Errorf("notification repository is required")
@@ -50,11 +53,15 @@ func NewNotificationService(
 	if publisher == nil {
 		return nil, fmt.Errorf("publisher is required")
 	}
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 
 	return &NotificationService{
 		notifications: notifications,
 		batches:       batches,
 		publisher:     publisher,
+		logger:        logger,
 	}, nil
 }
 
@@ -85,6 +92,19 @@ func (s *NotificationService) Create(ctx context.Context, notification *domain.N
 		Priority:       notification.Priority,
 	}
 	if err := s.publisher.Publish(ctx, queue.QueueName(notification.Channel), msg); err != nil {
+		s.logger.Error("failed to publish notification",
+			zap.String("notificationId", notification.ID),
+			zap.String("channel", string(notification.Channel)),
+			zap.Error(err),
+		)
+		if updateErr := s.notifications.UpdateStatus(ctx, notification.ID, domain.StatusFailed); updateErr != nil {
+			s.logger.Error("failed to mark notification as failed after publish error",
+				zap.String("notificationId", notification.ID),
+				zap.Error(updateErr),
+			)
+			return nil, fmt.Errorf("failed to publish notification: %w (failed to mark as failed: %v)", err, updateErr)
+		}
+		notification.Status = domain.StatusFailed
 		return nil, fmt.Errorf("failed to publish notification: %w", err)
 	}
 
@@ -111,8 +131,20 @@ func (s *NotificationService) CreateBatch(
 		return nil, nil, fmt.Errorf("%w: batch size exceeds %d", domain.ErrValidation, maxBatchSize)
 	}
 
+	batchID := uuid.NewString()
+
+	created := make([]domain.Notification, len(notifications))
+	createdPtrs := make([]*domain.Notification, len(notifications))
+	for i := range notifications {
+		created[i] = notifications[i]
+		if err := prepareNotificationForCreate(&created[i], &batchID); err != nil {
+			return nil, nil, err
+		}
+		createdPtrs[i] = &created[i]
+	}
+
 	batch := &domain.Batch{
-		ID:         uuid.NewString(),
+		ID:         batchID,
 		TotalCount: len(notifications),
 		Status:     domain.BatchStatusProcessing,
 	}
@@ -120,17 +152,8 @@ func (s *NotificationService) CreateBatch(
 		return nil, nil, err
 	}
 
-	created := make([]domain.Notification, len(notifications))
-	createdPtrs := make([]*domain.Notification, len(notifications))
-	for i := range notifications {
-		created[i] = notifications[i]
-		if err := prepareNotificationForCreate(&created[i], &batch.ID); err != nil {
-			return nil, nil, err
-		}
-		createdPtrs[i] = &created[i]
-	}
-
 	if err := s.notifications.CreateBatch(ctx, createdPtrs); err != nil {
+		_ = s.batches.UpdateStatus(ctx, batch.ID, domain.BatchStatusPartialFailure)
 		return nil, nil, err
 	}
 
@@ -145,7 +168,14 @@ func (s *NotificationService) CreateBatch(
 		}
 
 		if err := s.publisher.Publish(ctx, queue.QueueName(current.Channel), msg); err != nil {
+			s.logger.Error("batch: failed to publish notification",
+				zap.String("notificationId", current.ID),
+				zap.String("channel", string(current.Channel)),
+				zap.Error(err),
+			)
 			failed++
+			_ = s.notifications.UpdateStatus(ctx, current.ID, domain.StatusFailed)
+			current.Status = domain.StatusFailed
 			continue
 		}
 		if err := s.notifications.UpdateStatus(ctx, current.ID, domain.StatusQueued); err != nil {
@@ -164,6 +194,11 @@ func (s *NotificationService) CreateBatch(
 	}
 
 	if failed > 0 {
+		s.logger.Warn("batch completed with partial failure",
+			zap.String("batchId", batch.ID),
+			zap.Int("failed", failed),
+			zap.Int("total", len(created)),
+		)
 		return batch, created, fmt.Errorf("batch queued with partial failure: %d/%d failed", failed, len(created))
 	}
 
@@ -286,6 +321,10 @@ func (s *NotificationService) resolveIdempotencyConflict(
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to load existing notification after idempotency conflict: %w", err)
 	}
+	s.logger.Info("idempotency conflict resolved",
+		zap.String("existingId", existing.ID),
+		zap.String("idempotencyKey", *idempotencyKey),
+	)
 	return existing, true, nil
 }
 

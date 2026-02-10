@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 )
 
 func setRequiredEnv(t *testing.T) {
@@ -32,6 +33,12 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.WorkerConcurrency != 16 {
 		t.Errorf("WorkerConcurrency = %d, want 16", cfg.WorkerConcurrency)
 	}
+	if cfg.RetryScanInterval != 5*time.Second {
+		t.Errorf("RetryScanInterval = %s, want 5s", cfg.RetryScanInterval)
+	}
+	if cfg.RetryScanLimit != 100 {
+		t.Errorf("RetryScanLimit = %d, want 100", cfg.RetryScanLimit)
+	}
 }
 
 func TestLoad_CustomValues(t *testing.T) {
@@ -40,6 +47,8 @@ func TestLoad_CustomValues(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("RATE_LIMIT_PER_SEC", "250")
 	t.Setenv("WORKER_CONCURRENCY", "8")
+	t.Setenv("RETRY_SCAN_INTERVAL", "2s")
+	t.Setenv("RETRY_SCAN_LIMIT", "250")
 
 	cfg, err := Load()
 	if err != nil {
@@ -57,6 +66,12 @@ func TestLoad_CustomValues(t *testing.T) {
 	}
 	if cfg.WorkerConcurrency != 8 {
 		t.Errorf("WorkerConcurrency = %d, want 8", cfg.WorkerConcurrency)
+	}
+	if cfg.RetryScanInterval != 2*time.Second {
+		t.Errorf("RetryScanInterval = %s, want 2s", cfg.RetryScanInterval)
+	}
+	if cfg.RetryScanLimit != 250 {
+		t.Errorf("RetryScanLimit = %d, want 250", cfg.RetryScanLimit)
 	}
 }
 

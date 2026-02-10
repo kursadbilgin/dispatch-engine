@@ -51,7 +51,7 @@ func TestNotificationServiceCreateHappyPath(t *testing.T) {
 		},
 	}
 
-	svc, err := NewNotificationService(repo, &fakeBatchRepo{}, publisher)
+	svc, err := NewNotificationService(repo, &fakeBatchRepo{}, publisher, nil)
 	if err != nil {
 		t.Fatalf("NewNotificationService() error = %v", err)
 	}
@@ -74,6 +74,50 @@ func TestNotificationServiceCreateHappyPath(t *testing.T) {
 	}
 	if !updatedToQueued {
 		t.Fatal("expected UpdateStatus to be called")
+	}
+}
+
+func TestNotificationServiceCreatePublishFailureMarksFailed(t *testing.T) {
+	t.Parallel()
+
+	markedFailed := false
+	repo := &fakeNotificationRepo{
+		createFn: func(ctx context.Context, n *domain.Notification) error {
+			n.CreatedAt = time.Now().UTC()
+			n.UpdatedAt = n.CreatedAt
+			return nil
+		},
+		updateStatusFn: func(ctx context.Context, id string, status domain.Status) error {
+			if status != domain.StatusFailed {
+				t.Fatalf("status update = %s, want FAILED", status)
+			}
+			markedFailed = true
+			return nil
+		},
+	}
+
+	publisher := &fakePublisher{
+		publishFn: func(ctx context.Context, queueName string, msg queue.NotificationMessage) error {
+			return errors.New("broker unavailable")
+		},
+	}
+
+	svc, err := NewNotificationService(repo, &fakeBatchRepo{}, publisher, nil)
+	if err != nil {
+		t.Fatalf("NewNotificationService() error = %v", err)
+	}
+
+	_, err = svc.Create(context.Background(), &domain.Notification{
+		Channel:   domain.ChannelSMS,
+		Priority:  domain.PriorityNormal,
+		Recipient: "+905551112233",
+		Content:   "hello world",
+	})
+	if err == nil {
+		t.Fatal("Create() expected error, got nil")
+	}
+	if !markedFailed {
+		t.Fatal("Create() should mark notification as FAILED when publish fails")
 	}
 }
 
@@ -110,7 +154,7 @@ func TestNotificationServiceCreateIdempotencyConflictReturnsExisting(t *testing.
 		},
 	}
 
-	svc, err := NewNotificationService(repo, &fakeBatchRepo{}, publisher)
+	svc, err := NewNotificationService(repo, &fakeBatchRepo{}, publisher, nil)
 	if err != nil {
 		t.Fatalf("NewNotificationService() error = %v", err)
 	}
@@ -131,10 +175,84 @@ func TestNotificationServiceCreateIdempotencyConflictReturnsExisting(t *testing.
 	}
 }
 
+func TestNotificationServiceCreateBatchValidationBeforeBatchCreate(t *testing.T) {
+	t.Parallel()
+
+	batchCreateCalled := false
+	svc, err := NewNotificationService(
+		&fakeNotificationRepo{},
+		&fakeBatchRepo{
+			createFn: func(ctx context.Context, b *domain.Batch) error {
+				batchCreateCalled = true
+				return nil
+			},
+		},
+		&fakePublisher{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewNotificationService() error = %v", err)
+	}
+
+	_, _, err = svc.CreateBatch(context.Background(), []domain.Notification{
+		{
+			Channel:   domain.ChannelSMS,
+			Priority:  domain.PriorityNormal,
+			Recipient: "",
+			Content:   "invalid",
+		},
+	})
+	if !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("CreateBatch() error = %v, want ErrValidation", err)
+	}
+	if batchCreateCalled {
+		t.Fatal("batch should not be created when payload validation fails")
+	}
+}
+
+func TestNotificationServiceCreateBatchMarksBatchPartialFailureOnPersistError(t *testing.T) {
+	t.Parallel()
+
+	var updatedStatus domain.BatchStatus
+	svc, err := NewNotificationService(
+		&fakeNotificationRepo{
+			createBatchFn: func(ctx context.Context, notifications []*domain.Notification) error {
+				return errors.New("insert failed")
+			},
+		},
+		&fakeBatchRepo{
+			updateStatusFn: func(ctx context.Context, id string, status domain.BatchStatus) error {
+				updatedStatus = status
+				return nil
+			},
+		},
+		&fakePublisher{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewNotificationService() error = %v", err)
+	}
+
+	_, _, err = svc.CreateBatch(context.Background(), []domain.Notification{
+		{
+			Channel:   domain.ChannelSMS,
+			Priority:  domain.PriorityNormal,
+			Recipient: "+905551112233",
+			Content:   "hello",
+		},
+	})
+	if err == nil {
+		t.Fatal("CreateBatch() expected error, got nil")
+	}
+	if updatedStatus != domain.BatchStatusPartialFailure {
+		t.Fatalf("batch status update = %s, want PARTIAL_FAILURE", updatedStatus)
+	}
+}
+
 func TestNotificationServiceCreateBatchExceedsLimit(t *testing.T) {
 	t.Parallel()
 
-	svc, err := NewNotificationService(&fakeNotificationRepo{}, &fakeBatchRepo{}, &fakePublisher{})
+	svc, err := NewNotificationService(&fakeNotificationRepo{}, &fakeBatchRepo{}, &fakePublisher{}, nil)
 	if err != nil {
 		t.Fatalf("NewNotificationService() error = %v", err)
 	}
@@ -155,6 +273,133 @@ func TestNotificationServiceCreateBatchExceedsLimit(t *testing.T) {
 	}
 }
 
+func TestNewNotificationServiceRequiresDependencies(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		notifications repository.NotificationRepository
+		batches       repository.BatchRepository
+		publisher     queue.Publisher
+	}{
+		{
+			name:      "missing notification repository",
+			batches:   &fakeBatchRepo{},
+			publisher: &fakePublisher{},
+		},
+		{
+			name:          "missing batch repository",
+			notifications: &fakeNotificationRepo{},
+			publisher:     &fakePublisher{},
+		},
+		{
+			name:          "missing publisher",
+			notifications: &fakeNotificationRepo{},
+			batches:       &fakeBatchRepo{},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := NewNotificationService(tt.notifications, tt.batches, tt.publisher, nil); err == nil {
+				t.Fatal("NewNotificationService() expected error, got nil")
+			}
+		})
+	}
+}
+
+func TestNotificationServiceCreateBatchPartialFailure(t *testing.T) {
+	t.Parallel()
+
+	queuedCount := 0
+	failedCount := 0
+	repo := &fakeNotificationRepo{
+		createBatchFn: func(ctx context.Context, notifications []*domain.Notification) error {
+			if len(notifications) != 2 {
+				t.Fatalf("create batch len = %d, want 2", len(notifications))
+			}
+			return nil
+		},
+		updateStatusFn: func(ctx context.Context, id string, status domain.Status) error {
+			switch status {
+			case domain.StatusQueued:
+				queuedCount++
+			case domain.StatusFailed:
+				failedCount++
+			default:
+				t.Fatalf("status = %s, want QUEUED or FAILED", status)
+			}
+			return nil
+		},
+	}
+
+	var updatedBatchStatus domain.BatchStatus
+	batchRepo := &fakeBatchRepo{
+		updateStatusFn: func(ctx context.Context, id string, status domain.BatchStatus) error {
+			updatedBatchStatus = status
+			return nil
+		},
+	}
+
+	publishCalls := 0
+	publisher := &fakePublisher{
+		publishFn: func(ctx context.Context, queueName string, msg queue.NotificationMessage) error {
+			publishCalls++
+			if publishCalls == 2 {
+				return errors.New("broker temporary down")
+			}
+			return nil
+		},
+	}
+
+	svc, err := NewNotificationService(repo, batchRepo, publisher, nil)
+	if err != nil {
+		t.Fatalf("NewNotificationService() error = %v", err)
+	}
+
+	batch, created, err := svc.CreateBatch(context.Background(), []domain.Notification{
+		{
+			Channel:   domain.ChannelSMS,
+			Priority:  domain.PriorityNormal,
+			Recipient: "+905551112233",
+			Content:   "hello",
+		},
+		{
+			Channel:   domain.ChannelEmail,
+			Priority:  domain.PriorityHigh,
+			Recipient: "user@example.com",
+			Content:   "hello email",
+		},
+	})
+
+	if err == nil {
+		t.Fatal("CreateBatch() expected partial failure error, got nil")
+	}
+	if batch == nil {
+		t.Fatal("batch should not be nil")
+	}
+	if len(created) != 2 {
+		t.Fatalf("created len = %d, want 2", len(created))
+	}
+	if batch.Status != domain.BatchStatusPartialFailure {
+		t.Fatalf("batch status = %s, want PARTIAL_FAILURE", batch.Status)
+	}
+	if updatedBatchStatus != domain.BatchStatusPartialFailure {
+		t.Fatalf("updated batch status = %s, want PARTIAL_FAILURE", updatedBatchStatus)
+	}
+	if publishCalls != 2 {
+		t.Fatalf("publish calls = %d, want 2", publishCalls)
+	}
+	if queuedCount != 1 {
+		t.Fatalf("queued count = %d, want 1", queuedCount)
+	}
+	if failedCount != 1 {
+		t.Fatalf("failed count = %d, want 1", failedCount)
+	}
+}
+
 func TestNotificationServiceCancelConflict(t *testing.T) {
 	t.Parallel()
 
@@ -166,6 +411,7 @@ func TestNotificationServiceCancelConflict(t *testing.T) {
 		},
 		&fakeBatchRepo{},
 		&fakePublisher{},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("NewNotificationService() error = %v", err)
@@ -188,6 +434,7 @@ type fakeNotificationRepo struct {
 	cancelFn              func(ctx context.Context, id string) error
 	lockForSendingFn      func(ctx context.Context, id string) (*domain.Notification, error)
 	getDueForRetryFn      func(ctx context.Context, limit int) ([]domain.Notification, error)
+	clearNextRetryAtFn    func(ctx context.Context, id string) error
 	setProviderMessageID  func(ctx context.Context, id string, providerMsgID string) error
 	getBatchSummaryFn     func(ctx context.Context, batchID string) ([]repository.BatchSummary, error)
 }
@@ -260,6 +507,13 @@ func (f *fakeNotificationRepo) GetDueForRetry(ctx context.Context, limit int) ([
 		return f.getDueForRetryFn(ctx, limit)
 	}
 	return nil, nil
+}
+
+func (f *fakeNotificationRepo) ClearNextRetryAt(ctx context.Context, id string) error {
+	if f.clearNextRetryAtFn != nil {
+		return f.clearNextRetryAtFn(ctx, id)
+	}
+	return nil
 }
 
 func (f *fakeNotificationRepo) SetProviderMessageID(ctx context.Context, id string, providerMsgID string) error {
