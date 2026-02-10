@@ -1,0 +1,516 @@
+openapi: 3.0.3
+info:
+  title: Dispatch Engine API
+  version: 1.0.0
+  description: |
+    Event-driven notification dispatch API.
+    This specification documents the currently implemented HTTP endpoints.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Health
+  - name: Notifications
+  - name: Batches
+  - name: Observability
+
+paths:
+  /livez:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      operationId: getLivez
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LivezResponse"
+
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Readiness probe
+      operationId: getReadyz
+      responses:
+        "200":
+          description: Dependencies are ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyzResponse"
+        "503":
+          description: One or more dependencies are unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyzResponse"
+
+  /metrics:
+    get:
+      tags: [Observability]
+      summary: Prometheus metrics
+      operationId: getMetrics
+      responses:
+        "200":
+          description: Prometheus exposition format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /v1/notifications:
+    post:
+      tags: [Notifications]
+      summary: Create a notification
+      operationId: createNotification
+      parameters:
+        - in: header
+          name: X-Request-ID
+          required: false
+          schema:
+            type: string
+          description: Optional request id used as fallback correlation id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNotificationRequest"
+      responses:
+        "202":
+          description: Accepted for asynchronous processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      tags: [Notifications]
+      summary: List notifications
+      operationId: listNotifications
+      parameters:
+        - in: query
+          name: status
+          required: false
+          schema:
+            $ref: "#/components/schemas/Status"
+        - in: query
+          name: channel
+          required: false
+          schema:
+            $ref: "#/components/schemas/Channel"
+        - in: query
+          name: from
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: RFC3339 timestamp
+        - in: query
+          name: to
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: RFC3339 timestamp
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: pageSize
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: Paginated notifications
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListNotificationsResponse"
+        "400":
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/notifications/batch:
+    post:
+      tags: [Notifications]
+      summary: Create notifications in batch
+      operationId: createBatch
+      parameters:
+        - in: header
+          name: X-Request-ID
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBatchRequest"
+      responses:
+        "202":
+          description: Accepted. May include warning for partial enqueue failures.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateBatchResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/notifications/{id}:
+    get:
+      tags: [Notifications]
+      summary: Get notification by id
+      operationId: getNotification
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Notification details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationResponse"
+        "404":
+          description: Notification not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/notifications/{id}/cancel:
+    post:
+      tags: [Notifications]
+      summary: Cancel notification
+      operationId: cancelNotification
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Notification canceled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelNotificationResponse"
+        "404":
+          description: Notification not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Notification cannot be canceled in current state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/batches/{batchId}:
+    get:
+      tags: [Batches]
+      summary: Get batch summary
+      operationId: getBatchSummary
+      parameters:
+        - in: path
+          name: batchId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Batch summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchSummaryResponse"
+        "404":
+          description: Batch not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+    Channel:
+      type: string
+      enum: [SMS, EMAIL, PUSH]
+    Priority:
+      type: string
+      enum: [HIGH, NORMAL, LOW]
+    Status:
+      type: string
+      enum: [ACCEPTED, QUEUED, SENDING, SENT, FAILED, CANCELED]
+    BatchStatus:
+      type: string
+      enum: [PROCESSING, COMPLETED, PARTIAL_FAILURE]
+
+    CreateNotificationRequest:
+      type: object
+      required: [channel, priority, recipient, content]
+      properties:
+        correlationId:
+          type: string
+          description: Optional correlation id. If omitted, generated automatically.
+        idempotencyKey:
+          type: string
+          nullable: true
+        channel:
+          $ref: "#/components/schemas/Channel"
+        priority:
+          $ref: "#/components/schemas/Priority"
+        recipient:
+          type: string
+          minLength: 1
+        content:
+          type: string
+          minLength: 1
+          description: |
+            Channel content limits:
+            SMS <= 160, PUSH <= 240, EMAIL <= 10000 characters.
+        maxRetries:
+          type: integer
+          nullable: true
+          description: If null or <= 0, service default is used.
+
+    CreateBatchRequest:
+      type: object
+      required: [notifications]
+      properties:
+        notifications:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/CreateNotificationRequest"
+
+    NotificationResponse:
+      type: object
+      required:
+        - id
+        - correlationId
+        - channel
+        - priority
+        - recipient
+        - content
+        - status
+        - attemptCount
+        - maxRetries
+      properties:
+        id:
+          type: string
+        correlationId:
+          type: string
+        idempotencyKey:
+          type: string
+          nullable: true
+        batchId:
+          type: string
+          nullable: true
+        channel:
+          $ref: "#/components/schemas/Channel"
+        priority:
+          $ref: "#/components/schemas/Priority"
+        recipient:
+          type: string
+        content:
+          type: string
+        status:
+          $ref: "#/components/schemas/Status"
+        providerMessageId:
+          type: string
+          nullable: true
+        attemptCount:
+          type: integer
+        maxRetries:
+          type: integer
+        nextRetryAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateBatchResponse:
+      type: object
+      required: [batchId, status, totalCount, notifications]
+      properties:
+        batchId:
+          type: string
+        status:
+          $ref: "#/components/schemas/BatchStatus"
+        totalCount:
+          type: integer
+        notifications:
+          type: array
+          items:
+            $ref: "#/components/schemas/NotificationResponse"
+        warning:
+          type: string
+          description: Present when enqueue is partially successful.
+
+    ListMeta:
+      type: object
+      required: [page, pageSize, total]
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+          format: int64
+
+    ListNotificationsResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/NotificationResponse"
+        meta:
+          $ref: "#/components/schemas/ListMeta"
+
+    BatchSummaryItem:
+      type: object
+      required: [status, count]
+      properties:
+        status:
+          $ref: "#/components/schemas/Status"
+        count:
+          type: integer
+
+    BatchSummaryResponse:
+      type: object
+      required: [batchId, totalCount, status, counts]
+      properties:
+        batchId:
+          type: string
+        totalCount:
+          type: integer
+        status:
+          $ref: "#/components/schemas/BatchStatus"
+        counts:
+          type: array
+          items:
+            $ref: "#/components/schemas/BatchSummaryItem"
+
+    CancelNotificationResponse:
+      type: object
+      required: [notificationId, status]
+      properties:
+        notificationId:
+          type: string
+        status:
+          type: string
+          enum: [CANCELED]
+
+    LivezResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+    ReadyzChecks:
+      type: object
+      required: [postgres, redis]
+      properties:
+        postgres:
+          type: string
+          enum: [ok, down]
+        redis:
+          type: string
+          enum: [ok, down]
+
+    ReadyzResponse:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          $ref: "#/components/schemas/ReadyzChecks"
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

@@ -1,0 +1,320 @@
+{
+  "info": {
+    "_postman_id": "b9f5ea7a-9b55-4df3-9d4b-e7ca2a6079f9",
+    "name": "Dispatch Engine API",
+    "description": "Automated Postman checks for Dispatch Engine endpoints.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "requestId", "value": "req-local-001" },
+    { "key": "notificationId", "value": "" },
+    { "key": "batchId", "value": "" },
+    { "key": "singleIdempotencyKey", "value": "postman-single-static" },
+    { "key": "batchSmsIdempotencyKey", "value": "postman-batch-sms-static" },
+    { "key": "batchEmailIdempotencyKey", "value": "postman-batch-email-static" },
+    { "key": "pollAttempts", "value": "0" },
+    { "key": "maxPollAttempts", "value": "15" },
+    { "key": "lastNotificationStatus", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /livez",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('livez status is ok', function () { pm.expect(body.status).to.eql('ok'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/livez"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /readyz",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('readyz status is ready', function () { pm.expect(body.status).to.eql('ready'); });",
+                  "pm.test('postgres check is ok', function () { pm.expect(body.checks.postgres).to.eql('ok'); });",
+                  "pm.test('redis check is ok', function () { pm.expect(body.checks.redis).to.eql('ok'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/readyz"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "E2E Flow",
+      "item": [
+        {
+          "name": "POST /v1/notifications",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const runId = Date.now().toString();",
+                  "pm.collectionVariables.set('requestId', 'req-' + runId);",
+                  "pm.collectionVariables.set('singleIdempotencyKey', 'postman-single-' + runId);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 202', function () { pm.response.to.have.status(202); });",
+                  "const body = pm.response.json();",
+                  "pm.test('notification id exists', function () { pm.expect(body.id).to.be.a('string').and.not.empty; });",
+                  "pm.test('status is queued', function () { pm.expect(body.status).to.eql('QUEUED'); });",
+                  "pm.collectionVariables.set('notificationId', body.id);",
+                  "pm.collectionVariables.set('pollAttempts', '0');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Request-ID", "value": "{{requestId}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"channel\": \"SMS\",\n  \"priority\": \"NORMAL\",\n  \"recipient\": \"+905551112233\",\n  \"content\": \"Test notification from Postman\",\n  \"idempotencyKey\": \"{{singleIdempotencyKey}}\"\n}"
+            },
+            "url": "{{baseUrl}}/v1/notifications"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /v1/notifications/{id} (poll)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('notification id matches', function () { pm.expect(body.id).to.eql(pm.collectionVariables.get('notificationId')); });",
+                  "const transient = ['ACCEPTED', 'QUEUED', 'SENDING'];",
+                  "const status = body.status;",
+                  "pm.collectionVariables.set('lastNotificationStatus', status);",
+                  "let attempts = parseInt(pm.collectionVariables.get('pollAttempts') || '0', 10);",
+                  "const maxAttempts = parseInt(pm.collectionVariables.get('maxPollAttempts') || '15', 10);",
+                  "if (transient.includes(status) && attempts < maxAttempts) {",
+                  "  attempts += 1;",
+                  "  pm.collectionVariables.set('pollAttempts', String(attempts));",
+                  "  postman.setNextRequest('GET /v1/notifications/{id} (poll)');",
+                  "} else {",
+                  "  pm.test('notification reached terminal state', function () { pm.expect(['SENT', 'FAILED', 'CANCELED']).to.include(status); });",
+                  "  postman.setNextRequest('POST /v1/notifications/batch');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/notifications/{{notificationId}}"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /v1/notifications/batch",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const runId = Date.now().toString();",
+                  "pm.collectionVariables.set('batchSmsIdempotencyKey', 'postman-batch-sms-' + runId);",
+                  "pm.collectionVariables.set('batchEmailIdempotencyKey', 'postman-batch-email-' + runId);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 202', function () { pm.response.to.have.status(202); });",
+                  "const body = pm.response.json();",
+                  "pm.test('batch id exists', function () { pm.expect(body.batchId).to.be.a('string').and.not.empty; });",
+                  "pm.test('batch has notifications', function () { pm.expect(body.notifications).to.be.an('array').that.is.not.empty; });",
+                  "pm.collectionVariables.set('batchId', body.batchId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Request-ID", "value": "{{requestId}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notifications\": [\n    {\n      \"channel\": \"SMS\",\n      \"priority\": \"HIGH\",\n      \"recipient\": \"+905551112233\",\n      \"content\": \"Batch SMS item\",\n      \"idempotencyKey\": \"{{batchSmsIdempotencyKey}}\"\n    },\n    {\n      \"channel\": \"EMAIL\",\n      \"priority\": \"LOW\",\n      \"recipient\": \"test@example.com\",\n      \"content\": \"Batch email item\",\n      \"idempotencyKey\": \"{{batchEmailIdempotencyKey}}\"\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/v1/notifications/batch"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /v1/batches/{batchId}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('batch id matches', function () { pm.expect(body.batchId).to.eql(pm.collectionVariables.get('batchId')); });",
+                  "pm.test('batch status is valid', function () { pm.expect(['PROCESSING', 'COMPLETED', 'PARTIAL_FAILURE']).to.include(body.status); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/batches/{{batchId}}"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /v1/notifications (list)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('list has data/meta', function () {",
+                  "  pm.expect(body.data).to.be.an('array');",
+                  "  pm.expect(body.meta).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/notifications"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /v1/notifications (filtered)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('filtered list response shape is valid', function () {",
+                  "  pm.expect(body.data).to.be.an('array');",
+                  "  pm.expect(body.meta).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/notifications?status=QUEUED&channel=SMS&page=1&pageSize=20"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /metrics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () { pm.response.to.have.status(200); });",
+                  "const text = pm.response.text();",
+                  "pm.test('contains HTTP metric', function () { pm.expect(text).to.include('dispatch_engine_http_requests_total'); });",
+                  "pm.test('contains worker metric', function () { pm.expect(text).to.include('dispatch_engine_notifications_sent_total'); });",
+                  "postman.setNextRequest(null);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/metrics"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Optional",
+      "item": [
+        {
+          "name": "POST /v1/notifications/{id}/cancel",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200 or 409', function () { pm.expect([200, 409]).to.include(pm.response.code); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/v1/notifications/{{notificationId}}/cancel"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
