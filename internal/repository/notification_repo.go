@@ -3,11 +3,11 @@ package repository
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/kursadbilgin/dispatch-engine/internal/domain"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type ListParams struct {
@@ -208,25 +208,16 @@ func (r *GormNotificationRepo) Cancel(ctx context.Context, id string) error {
 
 func (r *GormNotificationRepo) LockForSending(ctx context.Context, id string) (*domain.Notification, error) {
 	var model NotificationModel
-	claimQuery := `
-UPDATE notifications
-SET status = ?, updated_at = NOW()
-WHERE id = ? AND status IN (?, ?)
-RETURNING *
-`
-	if err := r.db.WithContext(ctx).
-		Raw(
-			claimQuery,
-			domain.StatusSending,
-			id,
-			domain.StatusAccepted,
-			domain.StatusQueued,
-		).
-		Scan(&model).Error; err != nil {
-		return nil, err
+	result := r.db.WithContext(ctx).
+		Model(&model).
+		Clauses(clause.Returning{}).
+		Where("id = ? AND status IN ?", id, []domain.Status{domain.StatusAccepted, domain.StatusQueued}).
+		Update("status", domain.StatusSending)
+	if result.Error != nil {
+		return nil, result.Error
 	}
 
-	if strings.TrimSpace(model.ID) != "" {
+	if result.RowsAffected > 0 {
 		return notificationModelToDomain(&model), nil
 	}
 
@@ -241,13 +232,7 @@ RETURNING *
 		return nil, err
 	}
 
-	// Already claimed by another worker or reached terminal state.
-	switch existing.Status {
-	case domain.StatusCanceled, domain.StatusSent, domain.StatusFailed, domain.StatusSending:
-		return nil, nil
-	default:
-		return nil, nil
-	}
+	return nil, nil
 }
 
 func (r *GormNotificationRepo) GetDueForRetry(ctx context.Context, limit int) ([]domain.Notification, error) {
