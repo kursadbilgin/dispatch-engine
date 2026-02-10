@@ -131,4 +131,4 @@ Common HTTP status codes:
 
 ## OpenAPI
 
-Machine-readable API contract: [`../openapi.yaml`](../openapi.yaml)
+Machine-readable API contract: [`../openapi.yaml`](openapi.yaml)

@@ -137,7 +137,7 @@ dispatch-engine/
 | `/v1/notifications/batch` | POST | Create notification batch |
 | `/v1/batches/:batchId` | GET | Get batch summary |
 
-For full details, see [docs/API.en.md](docs/API.md) and [openapi.yaml](openapi.yaml).
+For full details, see [docs/API.en.md](docs/API.md) and [openapi.yaml](docs/openapi.yaml).
 
 ## Distributed System Patterns
 
@@ -157,7 +157,7 @@ For full details, see [docs/API.en.md](docs/API.md) and [openapi.yaml](openapi.y
 
 - Postman collection: [postman/dispatch-engine.postman_collection.json](postman/dispatch-engine.postman_collection.json)
 - Postman environment: [postman/dispatch-engine.local.postman_environment.json](postman/dispatch-engine.local.postman_environment.json)
-- OpenAPI spec: [openapi.yaml](openapi.yaml)
+- OpenAPI spec: [openapi.yaml](docs/openapi.yaml)
 
 ## License
 
